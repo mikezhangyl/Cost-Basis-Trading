@@ -3,11 +3,9 @@ from uuid import uuid4
 
 from app.domain.errors import DataErrorCode, DataUnavailableError
 from app.domain.models import (
-    BacktestEquityPoint,
+    BacktestObservation,
     BacktestRequest,
     BacktestResponse,
-    BacktestSummary,
-    BacktestTrade,
     ChipDistributionPoint,
     DailyPriceBar,
 )
@@ -17,6 +15,9 @@ from app.strategies.features import build_market_features
 
 
 class BacktestMarketDataClient(Protocol):
+    def resolve_trading_days_from(self, start_date: str, n_days: int) -> list[str]:
+        ...
+
     def get_stock_name(self, ts_code: str) -> str | None:
         ...
 
@@ -32,111 +33,45 @@ class BacktestService:
         self.market_data_client = market_data_client
 
     def run(self, request: BacktestRequest) -> BacktestResponse:
-        if request.start_date > request.end_date:
-            raise DataUnavailableError(DataErrorCode.EMPTY_DATA, "start_date must be before or equal to end_date.")
-
         ts_code = normalize_ts_code(request.stock_code)
+        trading_days = self.market_data_client.resolve_trading_days_from(request.start_date, request.window_days + 1)
+        if len(trading_days) < request.window_days + 1:
+            raise DataUnavailableError(DataErrorCode.EMPTY_DATA, "Not enough trading days for requested window.")
+        analysis_days = trading_days[: request.window_days]
+        signal_date = analysis_days[-1]
+        observation_date = trading_days[request.window_days]
         stock_name = self.market_data_client.get_stock_name(ts_code)
         prices = sorted(
-            self.market_data_client.get_daily_prices(ts_code, request.start_date, request.end_date),
+            self.market_data_client.get_daily_prices(ts_code, analysis_days[0], observation_date),
             key=lambda bar: bar.trade_date,
         )
-        chips = self.market_data_client.get_chip_distribution(ts_code, request.start_date, request.end_date)
-        if len(prices) <= request.n_days:
+        chips = self.market_data_client.get_chip_distribution(ts_code, analysis_days[0], signal_date)
+        analysis_prices = [bar for bar in prices if bar.trade_date in set(analysis_days)]
+        signal_bar = _bar_for_date(prices, signal_date)
+        observation_bar = _bar_for_date(prices, observation_date)
+        if len(analysis_prices) < request.window_days:
             raise DataUnavailableError(DataErrorCode.EMPTY_DATA, "Not enough price bars for requested backtest window.")
 
-        chips_by_date = _group_chips_by_date(chips)
-        cash = request.initial_cash
-        shares = 0
-        trades: list[BacktestTrade] = []
-        equity_curve: list[BacktestEquityPoint] = []
-        signal_count = 0
-
-        for index in range(request.n_days - 1, len(prices) - 1):
-            signal_date = prices[index].trade_date
-            execution_bar = prices[index + 1]
-            window_bars = prices[index - request.n_days + 1 : index + 1]
-            window_chips = _chips_for_window(chips_by_date, window_bars)
-            signal = evaluate_composite_signal(build_market_features(ts_code, window_chips, window_bars))
-            signal_count += 1
-
-            if signal.action == "BUY" and shares == 0:
-                buy_shares = int(cash // execution_bar.close)
-                if buy_shares > 0:
-                    cash -= buy_shares * execution_bar.close
-                    shares = buy_shares
-                    trades.append(
-                        BacktestTrade(
-                            trade_date=execution_bar.trade_date,
-                            action="BUY",
-                            price=execution_bar.close,
-                            shares=buy_shares,
-                            cash_after=cash,
-                            reason=signal.reasons[0],
-                        )
-                    )
-            elif signal.action == "SELL" and shares > 0:
-                cash += shares * execution_bar.close
-                trades.append(
-                    BacktestTrade(
-                        trade_date=execution_bar.trade_date,
-                        action="SELL",
-                        price=execution_bar.close,
-                        shares=shares,
-                        cash_after=cash,
-                        reason=signal.reasons[0],
-                    )
-                )
-                shares = 0
-
-            equity_curve.append(
-                BacktestEquityPoint(
-                    trade_date=execution_bar.trade_date,
-                    close=execution_bar.close,
-                    cash=cash,
-                    shares=shares,
-                    portfolio_value=cash + shares * execution_bar.close,
-                    signal_action=signal.action,
-                )
-            )
-
-        final_value = equity_curve[-1].portfolio_value if equity_curve else request.initial_cash
-        summary = BacktestSummary(
-            initial_cash=request.initial_cash,
-            final_value=final_value,
-            total_return=_safe_return(request.initial_cash, final_value),
-            benchmark_return=_safe_return(prices[request.n_days].close, prices[-1].close),
-            max_drawdown=_max_drawdown([point.portfolio_value for point in equity_curve]),
-            trade_count=len(trades),
-            signal_count=signal_count,
+        signal = evaluate_composite_signal(build_market_features(ts_code, chips, analysis_prices))
+        next_day_return = _safe_return(signal_bar.close, observation_bar.close)
+        observation = BacktestObservation(
+            signal_close=signal_bar.close,
+            observation_close=observation_bar.close,
+            next_day_return=next_day_return,
+            interpretation=_interpret_observation(signal.action, next_day_return),
         )
         return BacktestResponse.create(
             backtest_id=str(uuid4()),
             ts_code=ts_code,
             stock_name=stock_name,
-            date_range={"start_date": request.start_date, "end_date": request.end_date},
-            n_days=request.n_days,
-            summary=summary,
-            trades=trades,
-            equity_curve=equity_curve,
+            analysis_range={"start_date": analysis_days[0], "end_date": signal_date},
+            window_days=request.window_days,
+            signal_date=signal_date,
+            observation_date=observation_date,
+            signal=signal,
+            observation=observation,
+            row_counts={"chip_points": len(chips), "price_bars": len(analysis_prices)},
         )
-
-
-def _group_chips_by_date(chips: list[ChipDistributionPoint]) -> dict[str, list[ChipDistributionPoint]]:
-    grouped: dict[str, list[ChipDistributionPoint]] = {}
-    for point in chips:
-        grouped.setdefault(point.trade_date, []).append(point)
-    return grouped
-
-
-def _chips_for_window(
-    chips_by_date: dict[str, list[ChipDistributionPoint]],
-    window_bars: list[DailyPriceBar],
-) -> list[ChipDistributionPoint]:
-    rows: list[ChipDistributionPoint] = []
-    for bar in window_bars:
-        rows.extend(chips_by_date.get(bar.trade_date, []))
-    return rows
 
 
 def _safe_return(start_value: float, end_value: float) -> float:
@@ -145,13 +80,16 @@ def _safe_return(start_value: float, end_value: float) -> float:
     return (end_value - start_value) / start_value
 
 
-def _max_drawdown(values: list[float]) -> float:
-    if not values:
-        return 0
-    peak = values[0]
-    drawdown = 0.0
-    for value in values:
-        peak = max(peak, value)
-        if peak > 0:
-            drawdown = min(drawdown, (value - peak) / peak)
-    return drawdown
+def _bar_for_date(prices: list[DailyPriceBar], trade_date: str) -> DailyPriceBar:
+    for bar in prices:
+        if bar.trade_date == trade_date:
+            return bar
+    raise DataUnavailableError(DataErrorCode.EMPTY_DATA, f"Missing price bar for {trade_date}.")
+
+
+def _interpret_observation(action: str, next_day_return: float) -> str:
+    if action == "BUY":
+        return "观察日上涨，买入建议得到短期验证。" if next_day_return > 0 else "观察日下跌，买入建议短期未得到验证。"
+    if action == "SELL":
+        return "观察日下跌，卖出建议得到短期验证。" if next_day_return < 0 else "观察日上涨，卖出建议短期未得到验证。"
+    return "建议为持有，观察日用于记录后续走势，不直接判定胜负。"

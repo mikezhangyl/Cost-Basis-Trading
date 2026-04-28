@@ -40,6 +40,19 @@ class TushareMarketDataClient:
             raise DataUnavailableError(DataErrorCode.EMPTY_DATA, "Not enough trading days returned by Tushare.")
         return dates[-n_days:]
 
+    def resolve_trading_days_from(self, start_date: str, n_days: int) -> list[str]:
+        end_probe = (
+            datetime.strptime(start_date, "%Y%m%d").replace(tzinfo=UTC) + timedelta(days=max(30, n_days * 3))
+        ).strftime("%Y%m%d")
+        try:
+            data = self.pro.trade_cal(exchange="SSE", start_date=start_date, end_date=end_probe, is_open="1")
+        except Exception as error:
+            raise _map_tushare_error(error) from error
+        dates = sorted(str(item) for item in data["cal_date"].tolist())
+        if len(dates) < n_days:
+            raise DataUnavailableError(DataErrorCode.EMPTY_DATA, "Not enough forward trading days returned by Tushare.")
+        return dates[:n_days]
+
     def get_stock_name(self, ts_code: str) -> str | None:
         try:
             data = self.pro.stock_basic(ts_code=ts_code, fields="ts_code,name")

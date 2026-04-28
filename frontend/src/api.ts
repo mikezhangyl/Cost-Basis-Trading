@@ -31,43 +31,26 @@ export type ScanResponse = {
   results: StockScanResult[]
 }
 
-export type BacktestTrade = {
-  trade_date: string
-  action: "BUY" | "SELL"
-  price: number
-  shares: number
-  cash_after: number
-  reason: string
-}
-
 export type BacktestResponse = {
   backtest_id: string
   requested_at: string
   ts_code: string
   stock_name: string | null
-  date_range: {
+  analysis_range: {
     start_date: string
     end_date: string
   }
-  n_days: number
-  summary: {
-    initial_cash: number
-    final_value: number
-    total_return: number
-    benchmark_return: number
-    max_drawdown: number
-    trade_count: number
-    signal_count: number
+  window_days: number
+  signal_date: string
+  observation_date: string
+  signal: StrategySignal
+  observation: {
+    signal_close: number
+    observation_close: number
+    next_day_return: number
+    interpretation: string
   }
-  trades: BacktestTrade[]
-  equity_curve: Array<{
-    trade_date: string
-    close: number
-    cash: number
-    shares: number
-    portfolio_value: number
-    signal_action: SignalAction
-  }>
+  row_counts: Record<string, number>
 }
 
 type ApiEnvelope<T> = {
@@ -97,9 +80,7 @@ export async function runScan(stockCodes: string[], nDays: number): Promise<Scan
 export async function runBacktest(params: {
   stockCode: string
   startDate: string
-  endDate: string
-  nDays: number
-  initialCash: number
+  windowDays: number
 }): Promise<BacktestResponse> {
   const response = await fetch("/api/backtests", {
     method: "POST",
@@ -109,9 +90,7 @@ export async function runBacktest(params: {
     body: JSON.stringify({
       stock_code: params.stockCode,
       start_date: params.startDate,
-      end_date: params.endDate,
-      n_days: params.nDays,
-      initial_cash: params.initialCash
+      window_days: params.windowDays
     })
   })
   const envelope = (await response.json()) as ApiEnvelope<BacktestResponse>

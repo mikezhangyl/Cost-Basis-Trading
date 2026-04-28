@@ -35,13 +35,13 @@ Implemented first-screen behavior:
 
 Implemented first backtest behavior:
 
-- single-stock backtest form
-- `YYYYMMDD` start/end date inputs
-- initial cash input
-- long-only simulation using rolling strategy signals
-- signal generated from a completed rolling window and executed on the next trading day's close
-- summary metrics for total return, benchmark return, max drawdown, trade count, signal count, and final value
-- trade list with execution date, action, price, shares, and reason
+- single-stock historical window check
+- user enters `YYYYMMDD` start date and window size `M`
+- backend resolves the first `M + 1` trading days from the start date
+- first `M` trading days form the analysis window
+- the `M`th trading day is the signal date
+- the `M + 1`th trading day is the observation date
+- output includes the suggested action, confidence, reason, signal-day close, observation-day close, next-day return, and a short validation interpretation
 
 ## Product Boundaries
 

@@ -141,3 +141,23 @@ Before commit, backend `pytest -v`, frontend `npm run test`, and frontend `npm r
 
 ### Result
 The scaffold is merged into remote `main`, and the first backtest implementation is in the working tree pending its own commit.
+
+## Step 8
+
+### User Instruction
+你的前半部分和我预想的是一样的,但是其实我们只要设定一个起始日期,对吧?然后从起始日期开始往后N天,所以你要我填的是一个起始日期和N天的这个M,然后你自己去计算终止期是什么时候,然后根据这N天的筹码来推算第N加一天的操作,对不对? 我觉得第N天应该给我一个建议,是持有还是抛售,还是买入,然后观察人家一天开始的一个情况,如果我理解没错的话。
+
+### Understanding
+The intended first backtest is not a rolling portfolio simulator. It is a single-window historical validation: choose a start date and window size `M`, analyze those `M` trading days, produce the recommendation on day `M`, then observe day `M + 1`.
+
+### Plan
+Change the backtest API, service, frontend form, and display to use start date + window days. Remove end date, initial cash, trades, and equity curve from the first backtest surface.
+
+### Actions Taken
+Updated `BacktestRequest` to use `start_date` and `window_days`. Added forward trading-day resolution through `resolve_trading_days_from`. Reworked `BacktestService` to fetch `M + 1` trading days, compute the signal from the first `M`, and return observation-day performance. Updated frontend Backtest to `Window check`, showing suggestion, confidence, next-day return, signal close, observation close, chip rows, analysis range, reason, and interpretation.
+
+### Validation
+Backend `pytest -v` passed with 13 tests. Frontend `npm run test` passed with 3 tests. Frontend `npm run build` passed.
+
+### Result
+Backtest semantics now match the user's intended single-window historical validation model.

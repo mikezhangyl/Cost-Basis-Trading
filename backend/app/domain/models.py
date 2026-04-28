@@ -56,16 +56,14 @@ class ScanRequest(BaseModel):
 class BacktestRequest(BaseModel):
     stock_code: str = Field(min_length=1, max_length=16)
     start_date: str
-    end_date: str
-    n_days: int = Field(default=10, ge=2, le=120)
-    initial_cash: float = Field(default=100000, gt=0, le=1000000000)
+    window_days: int = Field(default=10, ge=2, le=120)
 
     @field_validator("stock_code")
     @classmethod
     def validate_stock_code(cls, value: str) -> str:
         return value.strip().upper()
 
-    @field_validator("start_date", "end_date")
+    @field_validator("start_date")
     @classmethod
     def validate_date(cls, value: str) -> str:
         if len(value) != 8 or not value.isdigit():
@@ -108,32 +106,11 @@ class ScanResponse(BaseModel):
         return cls(scan_id=scan_id, requested_at=datetime.now(UTC), n_days=n_days, results=results)
 
 
-class BacktestTrade(BaseModel):
-    trade_date: str
-    action: Literal["BUY", "SELL"]
-    price: float
-    shares: int
-    cash_after: float
-    reason: str
-
-
-class BacktestEquityPoint(BaseModel):
-    trade_date: str
-    close: float
-    cash: float
-    shares: int
-    portfolio_value: float
-    signal_action: SignalAction
-
-
-class BacktestSummary(BaseModel):
-    initial_cash: float
-    final_value: float
-    total_return: float
-    benchmark_return: float
-    max_drawdown: float
-    trade_count: int
-    signal_count: int
+class BacktestObservation(BaseModel):
+    signal_close: float
+    observation_close: float
+    next_day_return: float
+    interpretation: str
 
 
 class BacktestResponse(BaseModel):
@@ -141,11 +118,13 @@ class BacktestResponse(BaseModel):
     requested_at: datetime
     ts_code: str
     stock_name: str | None
-    date_range: dict[str, str]
-    n_days: int
-    summary: BacktestSummary
-    trades: list[BacktestTrade]
-    equity_curve: list[BacktestEquityPoint]
+    analysis_range: dict[str, str]
+    window_days: int
+    signal_date: str
+    observation_date: str
+    signal: StrategySignal
+    observation: BacktestObservation
+    row_counts: dict[str, int]
 
     @classmethod
     def create(
@@ -153,22 +132,26 @@ class BacktestResponse(BaseModel):
         backtest_id: str,
         ts_code: str,
         stock_name: str | None,
-        date_range: dict[str, str],
-        n_days: int,
-        summary: BacktestSummary,
-        trades: list[BacktestTrade],
-        equity_curve: list[BacktestEquityPoint],
+        analysis_range: dict[str, str],
+        window_days: int,
+        signal_date: str,
+        observation_date: str,
+        signal: StrategySignal,
+        observation: BacktestObservation,
+        row_counts: dict[str, int],
     ) -> "BacktestResponse":
         return cls(
             backtest_id=backtest_id,
             requested_at=datetime.now(UTC),
             ts_code=ts_code,
             stock_name=stock_name,
-            date_range=date_range,
-            n_days=n_days,
-            summary=summary,
-            trades=trades,
-            equity_curve=equity_curve,
+            analysis_range=analysis_range,
+            window_days=window_days,
+            signal_date=signal_date,
+            observation_date=observation_date,
+            signal=signal,
+            observation=observation,
+            row_counts=row_counts,
         )
 
 

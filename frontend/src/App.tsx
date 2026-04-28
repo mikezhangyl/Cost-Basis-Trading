@@ -12,8 +12,7 @@ export function App() {
   const [scanLogs, setScanLogs] = useState<string[]>([])
   const [backtestCode, setBacktestCode] = useState("600519")
   const [backtestStart, setBacktestStart] = useState("20260101")
-  const [backtestEnd, setBacktestEnd] = useState("20260428")
-  const [initialCash, setInitialCash] = useState(100000)
+  const [backtestWindowDays, setBacktestWindowDays] = useState(10)
   const [backtest, setBacktest] = useState<BacktestResponse | null>(null)
   const [backtestError, setBacktestError] = useState<string | null>(null)
   const [isBacktesting, setIsBacktesting] = useState(false)
@@ -66,9 +65,7 @@ export function App() {
       const nextBacktest = await runBacktest({
         stockCode: backtestCode,
         startDate: backtestStart,
-        endDate: backtestEnd,
-        nDays,
-        initialCash
+        windowDays: backtestWindowDays
       })
       setBacktest(nextBacktest)
     } catch (caught) {
@@ -149,11 +146,11 @@ export function App() {
         <div className="results-heading">
           <div>
             <p className="eyebrow">Historical simulation</p>
-            <h2>Backtest</h2>
+            <h2>Window check</h2>
           </div>
           <div className="scan-meta">
             <History size={16} />
-            Long only
+            M + 1 validation
           </div>
         </div>
 
@@ -167,17 +164,14 @@ export function App() {
             <input aria-label="Backtest start date" value={backtestStart} onChange={(event) => setBacktestStart(event.target.value)} />
           </label>
           <label className="field">
-            <span>End date</span>
-            <input aria-label="Backtest end date" value={backtestEnd} onChange={(event) => setBacktestEnd(event.target.value)} />
-          </label>
-          <label className="field">
-            <span>Initial cash</span>
+            <span>Window days</span>
             <input
-              aria-label="Initial cash"
-              min={1}
+              aria-label="Backtest window days"
+              min={2}
+              max={120}
               type="number"
-              value={initialCash}
-              onChange={(event) => setInitialCash(Number(event.target.value))}
+              value={backtestWindowDays}
+              onChange={(event) => setBacktestWindowDays(Number(event.target.value))}
             />
           </label>
           <button className="secondary-action" disabled={isBacktesting} type="submit">
@@ -277,44 +271,22 @@ function BacktestSummaryView({ backtest }: { backtest: BacktestResponse }) {
   return (
     <div className="backtest-output">
       <div className="metric-grid">
-        <Metric label="Total return" value={formatSignedPercent(backtest.summary.total_return)} tone={backtest.summary.total_return >= 0 ? "good" : "bad"} />
-        <Metric label="Benchmark" value={formatSignedPercent(backtest.summary.benchmark_return)} />
-        <Metric label="Max drawdown" value={formatSignedPercent(backtest.summary.max_drawdown)} tone="bad" />
-        <Metric label="Trades" value={String(backtest.summary.trade_count)} />
-        <Metric label="Signals" value={String(backtest.summary.signal_count)} />
-        <Metric label="Final value" value={formatCurrency(backtest.summary.final_value)} />
+        <Metric label="Suggestion" value={backtest.signal.action} tone={signalTone(backtest.signal.action)} />
+        <Metric label="Confidence" value={formatPercent(backtest.signal.confidence)} />
+        <Metric label="Next day" value={formatSignedPercent(backtest.observation.next_day_return)} tone={backtest.observation.next_day_return >= 0 ? "good" : "bad"} />
+        <Metric label="Signal close" value={formatNumber(backtest.observation.signal_close)} />
+        <Metric label="Observe close" value={formatNumber(backtest.observation.observation_close)} />
+        <Metric label="Chip rows" value={String(backtest.row_counts.chip_points ?? 0)} />
       </div>
 
-      <div className="trade-list">
+      <div className="backtest-detail">
         <h3>{backtest.ts_code} {backtest.stock_name ?? ""}</h3>
-        {backtest.trades.length > 0 ? (
-          <table>
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Action</th>
-                <th>Price</th>
-                <th>Shares</th>
-                <th>Reason</th>
-              </tr>
-            </thead>
-            <tbody>
-              {backtest.trades.map((trade) => (
-                <tr key={`${trade.trade_date}-${trade.action}-${trade.price}`}>
-                  <td>{trade.trade_date}</td>
-                  <td>
-                    <span className={`signal signal-${trade.action === "BUY" ? "buy" : "sell"}`}>{trade.action}</span>
-                  </td>
-                  <td>{formatNumber(trade.price)}</td>
-                  <td>{trade.shares}</td>
-                  <td className="reason-cell">{trade.reason}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : (
-          <p className="muted-text">No trades were triggered in this date range.</p>
-        )}
+        <p className="muted-text">
+          分析区间：{backtest.analysis_range.start_date} 至 {backtest.analysis_range.end_date}，
+          第 {backtest.window_days} 个交易日生成建议，观察日：{backtest.observation_date}。
+        </p>
+        <p className="reason-callout">{backtest.signal.reasons[0]}</p>
+        <p className="muted-text">{backtest.observation.interpretation}</p>
       </div>
     </div>
   )
@@ -345,8 +317,12 @@ function formatNumber(value: number | string | null | undefined) {
   return typeof value === "number" ? value.toFixed(2) : "-"
 }
 
-function formatCurrency(value: number) {
-  return new Intl.NumberFormat("en-US", {
-    maximumFractionDigits: 0
-  }).format(value)
+function signalTone(action: string) {
+  if (action === "BUY") {
+    return "good"
+  }
+  if (action === "SELL") {
+    return "bad"
+  }
+  return undefined
 }

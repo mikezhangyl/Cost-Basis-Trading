@@ -376,13 +376,29 @@ th {
   color: #a33325 !important;
 }
 
-.trade-list {
+.trade-list,
+.backtest-detail {
   overflow-x: auto;
 }
 
-.trade-list h3 {
+.trade-list h3,
+.backtest-detail h3 {
   margin: 0 0 10px;
   font-size: 1rem;
+}
+
+.backtest-detail {
+  display: grid;
+  gap: 10px;
+}
+
+.reason-callout {
+  margin: 0;
+  padding: 12px;
+  border-left: 4px solid #1f4939;
+  background: #f4f7f1;
+  color: #2f3d35;
+  font-weight: 800;
 }
 
 .muted-text {

@@ -44,28 +44,27 @@ const backtestResponse = {
     requested_at: "2026-04-28T15:00:00Z",
     ts_code: "600519.SH",
     stock_name: "贵州茅台",
-    date_range: { start_date: "20260101", end_date: "20260428" },
-    n_days: 10,
-    summary: {
-      initial_cash: 100000,
-      final_value: 108500,
-      total_return: 0.085,
-      benchmark_return: 0.031,
-      max_drawdown: -0.045,
-      trade_count: 2,
-      signal_count: 40
-    },
-    trades: [
-      {
-        trade_date: "20260301",
-        action: "BUY",
-        price: 1400,
-        shares: 70,
-        cash_after: 2000,
-        reason: "最新价向上突破主要筹码峰，且近 10 日涨幅为正。"
+    analysis_range: { start_date: "20260101", end_date: "20260114" },
+    window_days: 10,
+    signal_date: "20260114",
+    observation_date: "20260115",
+    signal: {
+      strategy_name: "trend_confirmed_chip_signal",
+      action: "BUY",
+      confidence: 0.78,
+      reasons: ["最新价向上突破主要筹码峰，且近 10 日涨幅为正。"],
+      features: {
+        latest_close: 1400,
+        n_day_return: 0.04
       }
-    ],
-    equity_curve: []
+    },
+    observation: {
+      signal_close: 1400,
+      observation_close: 1428,
+      next_day_return: 0.02,
+      interpretation: "观察日上涨，买入建议得到短期验证。"
+    },
+    row_counts: { chip_points: 900, price_bars: 10 }
   },
   error: null
 }
@@ -136,7 +135,7 @@ describe("App", () => {
     expect(screen.getByText("No cyq_chips rows returned.")).toBeInTheDocument()
   })
 
-  it("runs a backtest and renders summary metrics", async () => {
+  it("runs a backtest and renders single-window validation", async () => {
     vi.mocked(fetch).mockResolvedValueOnce({
       ok: true,
       json: async () => backtestResponse
@@ -146,10 +145,11 @@ describe("App", () => {
 
     await user.click(screen.getByRole("button", { name: /run backtest/i }))
 
-    expect(await screen.findByText("+8.50%")).toBeInTheDocument()
-    expect(screen.getByText("+3.10%")).toBeInTheDocument()
-    expect(screen.getByText("-4.50%")).toBeInTheDocument()
+    expect(await screen.findByText("BUY")).toBeInTheDocument()
+    expect(screen.getByText("78%")).toBeInTheDocument()
+    expect(screen.getByText("+2.00%")).toBeInTheDocument()
     expect(screen.getByText("600519.SH 贵州茅台")).toBeInTheDocument()
-    expect(screen.getByText("20260301")).toBeInTheDocument()
+    expect(screen.getByText(/分析区间：20260101 至 20260114/)).toBeInTheDocument()
+    expect(screen.getByText("观察日上涨，买入建议得到短期验证。")).toBeInTheDocument()
   })
 })

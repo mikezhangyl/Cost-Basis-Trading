@@ -3,6 +3,9 @@ from app.services.backtest_service import BacktestService
 
 
 class FakeBacktestClient:
+    def resolve_trading_days_from(self, start_date: str, n_days: int) -> list[str]:
+        return self._dates()[:n_days]
+
     def get_stock_name(self, ts_code: str) -> str:
         return "贵州茅台"
 
@@ -54,24 +57,24 @@ class FakeBacktestClient:
         ]
 
 
-def test_backtest_service_simulates_long_only_trades() -> None:
+def test_backtest_service_evaluates_single_window_and_next_day_observation() -> None:
     service = BacktestService(FakeBacktestClient())
 
     result = service.run(
         BacktestRequest(
             stock_code="600519",
             start_date="20260401",
-            end_date="20260417",
-            n_days=5,
-            initial_cash=100000,
+            window_days=5,
         )
     )
 
     assert result.ts_code == "600519.SH"
     assert result.stock_name == "贵州茅台"
-    assert result.summary.initial_cash == 100000
-    assert result.summary.final_value > 0
-    assert result.summary.signal_count == 7
-    assert result.summary.trade_count >= 1
-    assert result.equity_curve[-1].trade_date == "20260417"
-    assert all(point.portfolio_value > 0 for point in result.equity_curve)
+    assert result.window_days == 5
+    assert result.analysis_range == {"start_date": "20260401", "end_date": "20260408"}
+    assert result.signal_date == "20260408"
+    assert result.observation_date == "20260409"
+    assert result.signal.action == "HOLD"
+    assert result.observation.signal_close == 104
+    assert result.observation.observation_close == 108
+    assert result.observation.next_day_return == 0.038461538461538464

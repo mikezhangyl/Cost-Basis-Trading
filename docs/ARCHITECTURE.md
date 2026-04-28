@@ -32,16 +32,16 @@
 
 ### Backtest Flow
 
-1. The user enters one stock code, start date, end date, rolling window, and initial cash.
-2. The backend fetches daily price bars and `cyq_chips` details for the whole range.
-3. The backtest service builds rolling windows of `n_days`.
-4. A strategy signal is generated from each completed window.
-5. The simulator executes that signal on the next trading day's close.
-6. The simulator is long-only:
-   - `BUY` enters with all available cash when flat
-   - `SELL` exits the full position when long
-   - `HOLD` keeps current state
-7. The API returns summary metrics, trades, and equity curve points.
+This first backtest surface is a single-window historical validation, not a portfolio simulator.
+
+1. The user enters one stock code, a start date, and window size `M`.
+2. The backend resolves the first `M + 1` trading days from that start date.
+3. The first `M` trading days form the analysis window.
+4. The `M`th trading day is the signal date.
+5. The backend fetches `cyq_chips` and daily price bars for the analysis window.
+6. The same signal strategy used by live scans generates a `BUY`, `HOLD`, or `SELL` recommendation on the signal date.
+7. The `M + 1`th trading day is the observation date.
+8. The API returns signal details plus observation-day close and next-day return.
 
 ## API Contract Direction
 

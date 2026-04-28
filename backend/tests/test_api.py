@@ -32,9 +32,7 @@ def test_backtest_validates_date_format() -> None:
         json={
             "stock_code": "600519",
             "start_date": "2026-01-01",
-            "end_date": "20260428",
-            "n_days": 10,
-            "initial_cash": 100000,
+            "window_days": 10,
         },
     )
 

@@ -97,13 +97,16 @@ Status: pytest, Vitest, and frontend production build pass. Live Tushare scan su
 Status: implemented after the initial scaffold commit.
 
 - Added `POST /api/backtests`.
-- Added long-only rolling strategy simulation.
+- Added single-window historical validation:
+  - start date + `M` trading days
+  - signal on day `M`
+  - observation on day `M + 1`
 - Added backend tests for backtest service and API validation.
-- Added frontend backtest form, summary metrics, and trade list.
+- Added frontend backtest form, signal/observation metrics, and interpretation copy.
 
 Remaining follow-up:
 
-- Add charted equity curve.
-- Add transaction costs/slippage settings.
-- Add benchmark selection.
+- Add multi-window rolling validation after this single-window contract is stable.
+- Add stock-pool validation.
+- Add batch export for historical checks.
 - Add caching for larger date ranges.
