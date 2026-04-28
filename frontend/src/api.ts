@@ -42,14 +42,16 @@ export type BacktestResponse = {
   }
   window_days: number
   signal_date: string
-  observation_date: string
   signal: StrategySignal
-  observation: {
+  observations: Array<{
+    offset_days: number
+    observation_date: string
     signal_close: number
     observation_close: number
-    next_day_return: number
+    period_return: number
+    match_label: "MATCH" | "MISMATCH" | "NEUTRAL"
     interpretation: string
-  }
+  }>
   row_counts: Record<string, number>
 }
 

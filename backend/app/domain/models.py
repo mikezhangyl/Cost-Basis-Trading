@@ -106,10 +106,13 @@ class ScanResponse(BaseModel):
         return cls(scan_id=scan_id, requested_at=datetime.now(UTC), n_days=n_days, results=results)
 
 
-class BacktestObservation(BaseModel):
+class BacktestObservationPoint(BaseModel):
+    offset_days: int
+    observation_date: str
     signal_close: float
     observation_close: float
-    next_day_return: float
+    period_return: float
+    match_label: Literal["MATCH", "MISMATCH", "NEUTRAL"]
     interpretation: str
 
 
@@ -121,9 +124,8 @@ class BacktestResponse(BaseModel):
     analysis_range: dict[str, str]
     window_days: int
     signal_date: str
-    observation_date: str
     signal: StrategySignal
-    observation: BacktestObservation
+    observations: list[BacktestObservationPoint]
     row_counts: dict[str, int]
 
     @classmethod
@@ -135,9 +137,8 @@ class BacktestResponse(BaseModel):
         analysis_range: dict[str, str],
         window_days: int,
         signal_date: str,
-        observation_date: str,
         signal: StrategySignal,
-        observation: BacktestObservation,
+        observations: list[BacktestObservationPoint],
         row_counts: dict[str, int],
     ) -> "BacktestResponse":
         return cls(
@@ -148,9 +149,8 @@ class BacktestResponse(BaseModel):
             analysis_range=analysis_range,
             window_days=window_days,
             signal_date=signal_date,
-            observation_date=observation_date,
             signal=signal,
-            observation=observation,
+            observations=observations,
             row_counts=row_counts,
         )
 

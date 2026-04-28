@@ -376,6 +376,31 @@ th {
   color: #a33325 !important;
 }
 
+.match-label {
+  display: inline-flex;
+  min-width: 58px;
+  justify-content: center;
+  padding: 5px 8px;
+  border-radius: 999px;
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.match-match {
+  color: #176142;
+  background: #dbeee4;
+}
+
+.match-mismatch {
+  color: #a33325;
+  background: #f5d8d2;
+}
+
+.match-neutral {
+  color: #5d4a13;
+  background: #eee5c7;
+}
+
 .trade-list,
 .backtest-detail {
   overflow-x: auto;

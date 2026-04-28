@@ -150,7 +150,7 @@ export function App() {
           </div>
           <div className="scan-meta">
             <History size={16} />
-            M + 1 validation
+            M + 3 / 7 / 15 validation
           </div>
         </div>
 
@@ -273,9 +273,9 @@ function BacktestSummaryView({ backtest }: { backtest: BacktestResponse }) {
       <div className="metric-grid">
         <Metric label="Suggestion" value={backtest.signal.action} tone={signalTone(backtest.signal.action)} />
         <Metric label="Confidence" value={formatPercent(backtest.signal.confidence)} />
-        <Metric label="Next day" value={formatSignedPercent(backtest.observation.next_day_return)} tone={backtest.observation.next_day_return >= 0 ? "good" : "bad"} />
-        <Metric label="Signal close" value={formatNumber(backtest.observation.signal_close)} />
-        <Metric label="Observe close" value={formatNumber(backtest.observation.observation_close)} />
+        <Metric label="N+3" value={formatObservationReturn(backtest, 3)} tone={observationTone(backtest, 3)} />
+        <Metric label="N+7" value={formatObservationReturn(backtest, 7)} tone={observationTone(backtest, 7)} />
+        <Metric label="N+15" value={formatObservationReturn(backtest, 15)} tone={observationTone(backtest, 15)} />
         <Metric label="Chip rows" value={String(backtest.row_counts.chip_points ?? 0)} />
       </div>
 
@@ -283,10 +283,37 @@ function BacktestSummaryView({ backtest }: { backtest: BacktestResponse }) {
         <h3>{backtest.ts_code} {backtest.stock_name ?? ""}</h3>
         <p className="muted-text">
           分析区间：{backtest.analysis_range.start_date} 至 {backtest.analysis_range.end_date}，
-          第 {backtest.window_days} 个交易日生成建议，观察日：{backtest.observation_date}。
+          第 {backtest.window_days} 个交易日生成建议。
         </p>
         <p className="reason-callout">{backtest.signal.reasons[0]}</p>
-        <p className="muted-text">{backtest.observation.interpretation}</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Window</th>
+              <th>Observe Date</th>
+              <th>Close</th>
+              <th>Return</th>
+              <th>Match</th>
+              <th>Interpretation</th>
+            </tr>
+          </thead>
+          <tbody>
+            {backtest.observations.map((observation) => (
+              <tr key={observation.offset_days}>
+                <td>N+{observation.offset_days}</td>
+                <td>{observation.observation_date}</td>
+                <td>{formatNumber(observation.observation_close)}</td>
+                <td>{formatSignedPercent(observation.period_return)}</td>
+                <td>
+                  <span className={`match-label match-${observation.match_label.toLowerCase()}`}>
+                    {matchLabelText(observation.match_label)}
+                  </span>
+                </td>
+                <td className="reason-cell">{observation.interpretation}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   )
@@ -325,4 +352,30 @@ function signalTone(action: string) {
     return "bad"
   }
   return undefined
+}
+
+function findObservation(backtest: BacktestResponse, offsetDays: number) {
+  return backtest.observations.find((observation) => observation.offset_days === offsetDays)
+}
+
+function formatObservationReturn(backtest: BacktestResponse, offsetDays: number) {
+  return formatSignedPercent(findObservation(backtest, offsetDays)?.period_return)
+}
+
+function observationTone(backtest: BacktestResponse, offsetDays: number) {
+  const observation = findObservation(backtest, offsetDays)
+  if (!observation) {
+    return undefined
+  }
+  return observation.period_return >= 0 ? "good" : "bad"
+}
+
+function matchLabelText(label: string) {
+  if (label === "MATCH") {
+    return "匹配"
+  }
+  if (label === "MISMATCH") {
+    return "不匹配"
+  }
+  return "记录"
 }

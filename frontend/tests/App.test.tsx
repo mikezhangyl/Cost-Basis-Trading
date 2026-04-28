@@ -47,7 +47,6 @@ const backtestResponse = {
     analysis_range: { start_date: "20260101", end_date: "20260114" },
     window_days: 10,
     signal_date: "20260114",
-    observation_date: "20260115",
     signal: {
       strategy_name: "trend_confirmed_chip_signal",
       action: "BUY",
@@ -58,12 +57,35 @@ const backtestResponse = {
         n_day_return: 0.04
       }
     },
-    observation: {
-      signal_close: 1400,
-      observation_close: 1428,
-      next_day_return: 0.02,
-      interpretation: "观察日上涨，买入建议得到短期验证。"
-    },
+    observations: [
+      {
+        offset_days: 3,
+        observation_date: "20260119",
+        signal_close: 1400,
+        observation_close: 1428,
+        period_return: 0.02,
+        match_label: "MATCH",
+        interpretation: "N+3 上涨，买入建议得到阶段验证。"
+      },
+      {
+        offset_days: 7,
+        observation_date: "20260123",
+        signal_close: 1400,
+        observation_close: 1372,
+        period_return: -0.02,
+        match_label: "MISMATCH",
+        interpretation: "N+7 下跌，买入建议阶段未得到验证。"
+      },
+      {
+        offset_days: 15,
+        observation_date: "20260204",
+        signal_close: 1400,
+        observation_close: 1456,
+        period_return: 0.04,
+        match_label: "MATCH",
+        interpretation: "N+15 上涨，买入建议得到阶段验证。"
+      }
+    ],
     row_counts: { chip_points: 900, price_bars: 10 }
   },
   error: null
@@ -135,7 +157,7 @@ describe("App", () => {
     expect(screen.getByText("No cyq_chips rows returned.")).toBeInTheDocument()
   })
 
-  it("runs a backtest and renders single-window validation", async () => {
+  it("runs a backtest and renders multi-horizon validation", async () => {
     vi.mocked(fetch).mockResolvedValueOnce({
       ok: true,
       json: async () => backtestResponse
@@ -147,9 +169,13 @@ describe("App", () => {
 
     expect(await screen.findByText("BUY")).toBeInTheDocument()
     expect(screen.getByText("78%")).toBeInTheDocument()
-    expect(screen.getByText("+2.00%")).toBeInTheDocument()
+    expect(screen.getAllByText("+2.00%").length).toBeGreaterThan(0)
+    expect(screen.getAllByText("-2.00%").length).toBeGreaterThan(0)
+    expect(screen.getAllByText("+4.00%").length).toBeGreaterThan(0)
     expect(screen.getByText("600519.SH 贵州茅台")).toBeInTheDocument()
     expect(screen.getByText(/分析区间：20260101 至 20260114/)).toBeInTheDocument()
-    expect(screen.getByText("观察日上涨，买入建议得到短期验证。")).toBeInTheDocument()
+    expect(screen.getAllByText("匹配")).toHaveLength(2)
+    expect(screen.getByText("不匹配")).toBeInTheDocument()
+    expect(screen.getByText("N+15 上涨，买入建议得到阶段验证。")).toBeInTheDocument()
   })
 })

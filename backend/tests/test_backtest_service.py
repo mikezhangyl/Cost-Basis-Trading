@@ -23,7 +23,28 @@ class FakeBacktestClient:
         return rows
 
     def get_daily_prices(self, ts_code: str, start_date: str, end_date: str) -> list[DailyPriceBar]:
-        closes = [100, 101, 102, 103, 104, 108, 112, 116, 114, 110, 106, 102]
+        closes = [
+            100,
+            101,
+            102,
+            103,
+            104,
+            108,
+            112,
+            116,
+            114,
+            110,
+            106,
+            102,
+            104,
+            106,
+            108,
+            110,
+            112,
+            114,
+            116,
+            118,
+        ]
         return [
             DailyPriceBar(
                 ts_code=ts_code,
@@ -54,10 +75,18 @@ class FakeBacktestClient:
             "20260415",
             "20260416",
             "20260417",
+            "20260420",
+            "20260421",
+            "20260422",
+            "20260423",
+            "20260424",
+            "20260427",
+            "20260428",
+            "20260429",
         ]
 
 
-def test_backtest_service_evaluates_single_window_and_next_day_observation() -> None:
+def test_backtest_service_evaluates_single_window_and_forward_observations() -> None:
     service = BacktestService(FakeBacktestClient())
 
     result = service.run(
@@ -73,8 +102,9 @@ def test_backtest_service_evaluates_single_window_and_next_day_observation() -> 
     assert result.window_days == 5
     assert result.analysis_range == {"start_date": "20260401", "end_date": "20260408"}
     assert result.signal_date == "20260408"
-    assert result.observation_date == "20260409"
+    assert [observation.offset_days for observation in result.observations] == [3, 7, 15]
     assert result.signal.action == "HOLD"
-    assert result.observation.signal_close == 104
-    assert result.observation.observation_close == 108
-    assert result.observation.next_day_return == 0.038461538461538464
+    assert result.observations[0].signal_close == 104
+    assert result.observations[0].observation_close == 116
+    assert result.observations[0].period_return == 0.11538461538461539
+    assert result.observations[0].match_label == "NEUTRAL"

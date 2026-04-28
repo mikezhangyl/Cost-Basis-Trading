@@ -37,11 +37,11 @@ Implemented first backtest behavior:
 
 - single-stock historical window check
 - user enters `YYYYMMDD` start date and window size `M`
-- backend resolves the first `M + 1` trading days from the start date
+- backend resolves enough trading days to evaluate `N+3`, `N+7`, and `N+15`
 - first `M` trading days form the analysis window
 - the `M`th trading day is the signal date
-- the `M + 1`th trading day is the observation date
-- output includes the suggested action, confidence, reason, signal-day close, observation-day close, next-day return, and a short validation interpretation
+- observation windows are `N+3`, `N+7`, and `N+15`
+- output includes the suggested action, confidence, reason, each observation date, each observation close, each period return, and whether the movement matches the original `BUY` or `SELL` suggestion
 
 ## Product Boundaries
 

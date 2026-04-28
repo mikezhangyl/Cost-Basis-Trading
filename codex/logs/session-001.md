@@ -161,3 +161,23 @@ Backend `pytest -v` passed with 13 tests. Frontend `npm run test` passed with 3 
 
 ### Result
 Backtest semantics now match the user's intended single-window historical validation model.
+
+## Step 9
+
+### User Instruction
+观察是设成n加1,感觉不公平,我们从n,我们观察n加15吧,好吗,n加15这个范围内的一个涨幅,来判断好不好,或者说我们分几档吧,我们分n加3,n加7,n加15这三档,计算这三档的这个涨幅,好吗,然后跟这个之前的一个买入卖出的信息的判断做对比,好吗?
+
+### Understanding
+The single next-day observation is too noisy. Backtest validation should compare the signal against three forward windows: N+3, N+7, and N+15 trading days.
+
+### Plan
+Extend the backtest response to return multiple observation checkpoints, each with return and match status. Update frontend display and tests.
+
+### Actions Taken
+Added `observations[]` to the backtest response. Each observation includes offset, observation date, observation close, period return, match label, and interpretation. Updated frontend Window Check metrics and added an observation table.
+
+### Validation
+Backend `pytest -v` passed with 13 tests. Frontend `npm run test` passed with 3 tests. Frontend `npm run build` passed.
+
+### Result
+Backtest validation now evaluates N+3, N+7, and N+15 forward windows instead of only N+1.
