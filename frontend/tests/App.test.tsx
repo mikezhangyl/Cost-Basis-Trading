@@ -37,6 +37,39 @@ const scanResponse = {
   error: null
 }
 
+const backtestResponse = {
+  success: true,
+  data: {
+    backtest_id: "backtest-1",
+    requested_at: "2026-04-28T15:00:00Z",
+    ts_code: "600519.SH",
+    stock_name: "贵州茅台",
+    date_range: { start_date: "20260101", end_date: "20260428" },
+    n_days: 10,
+    summary: {
+      initial_cash: 100000,
+      final_value: 108500,
+      total_return: 0.085,
+      benchmark_return: 0.031,
+      max_drawdown: -0.045,
+      trade_count: 2,
+      signal_count: 40
+    },
+    trades: [
+      {
+        trade_date: "20260301",
+        action: "BUY",
+        price: 1400,
+        shares: 70,
+        cash_after: 2000,
+        reason: "最新价向上突破主要筹码峰，且近 10 日涨幅为正。"
+      }
+    ],
+    equity_curve: []
+  },
+  error: null
+}
+
 describe("App", () => {
   beforeEach(() => {
     vi.stubGlobal(
@@ -101,5 +134,22 @@ describe("App", () => {
 
     expect(await screen.findByText("EMPTY_DATA")).toBeInTheDocument()
     expect(screen.getByText("No cyq_chips rows returned.")).toBeInTheDocument()
+  })
+
+  it("runs a backtest and renders summary metrics", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => backtestResponse
+    } as Response)
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(screen.getByRole("button", { name: /run backtest/i }))
+
+    expect(await screen.findByText("+8.50%")).toBeInTheDocument()
+    expect(screen.getByText("+3.10%")).toBeInTheDocument()
+    expect(screen.getByText("-4.50%")).toBeInTheDocument()
+    expect(screen.getByText("600519.SH 贵州茅台")).toBeInTheDocument()
+    expect(screen.getByText("20260301")).toBeInTheDocument()
   })
 })

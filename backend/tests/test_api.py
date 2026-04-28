@@ -22,3 +22,20 @@ def test_scan_validates_empty_stock_list() -> None:
     response = client.post("/api/scans", json={"stock_codes": [], "n_days": 10})
 
     assert response.status_code == 422
+
+
+def test_backtest_validates_date_format() -> None:
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/api/backtests",
+        json={
+            "stock_code": "600519",
+            "start_date": "2026-01-01",
+            "end_date": "20260428",
+            "n_days": 10,
+            "initial_cash": 100000,
+        },
+    )
+
+    assert response.status_code == 422

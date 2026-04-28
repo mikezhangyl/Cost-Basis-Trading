@@ -30,6 +30,19 @@
 8. A combined signal selector returns `BUY`, `HOLD`, or `SELL` plus reasons.
 9. The frontend renders the per-stock result table.
 
+### Backtest Flow
+
+1. The user enters one stock code, start date, end date, rolling window, and initial cash.
+2. The backend fetches daily price bars and `cyq_chips` details for the whole range.
+3. The backtest service builds rolling windows of `n_days`.
+4. A strategy signal is generated from each completed window.
+5. The simulator executes that signal on the next trading day's close.
+6. The simulator is long-only:
+   - `BUY` enters with all available cash when flat
+   - `SELL` exits the full position when long
+   - `HOLD` keeps current state
+7. The API returns summary metrics, trades, and equity curve points.
+
 ## API Contract Direction
 
 Use a stable response envelope:
@@ -48,6 +61,10 @@ Use a stable response envelope:
 ```
 
 Per-stock errors belong in `results[]` so one bad symbol does not fail the whole scan.
+
+Backtest endpoint:
+
+- `POST /api/backtests`
 
 ## Strategy Boundary
 

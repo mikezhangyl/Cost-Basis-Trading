@@ -91,3 +91,19 @@ Status: pytest, Vitest, and frontend production build pass. Live Tushare scan su
 - Strategy decisions are explainable and covered by tests.
 - Missing Tushare token or permission produces actionable errors.
 - Frontend shows signal conclusions without needing browser console inspection.
+
+## Backtest First Pass
+
+Status: implemented after the initial scaffold commit.
+
+- Added `POST /api/backtests`.
+- Added long-only rolling strategy simulation.
+- Added backend tests for backtest service and API validation.
+- Added frontend backtest form, summary metrics, and trade list.
+
+Remaining follow-up:
+
+- Add charted equity curve.
+- Add transaction costs/slippage settings.
+- Add benchmark selection.
+- Add caching for larger date ranges.

@@ -53,6 +53,26 @@ class ScanRequest(BaseModel):
         return value
 
 
+class BacktestRequest(BaseModel):
+    stock_code: str = Field(min_length=1, max_length=16)
+    start_date: str
+    end_date: str
+    n_days: int = Field(default=10, ge=2, le=120)
+    initial_cash: float = Field(default=100000, gt=0, le=1000000000)
+
+    @field_validator("stock_code")
+    @classmethod
+    def validate_stock_code(cls, value: str) -> str:
+        return value.strip().upper()
+
+    @field_validator("start_date", "end_date")
+    @classmethod
+    def validate_date(cls, value: str) -> str:
+        if len(value) != 8 or not value.isdigit():
+            raise ValueError("Date must use YYYYMMDD format.")
+        return value
+
+
 class StrategySignal(BaseModel):
     strategy_name: str
     action: SignalAction
@@ -86,6 +106,70 @@ class ScanResponse(BaseModel):
     @classmethod
     def create(cls, scan_id: str, n_days: int, results: list[StockScanResult]) -> "ScanResponse":
         return cls(scan_id=scan_id, requested_at=datetime.now(UTC), n_days=n_days, results=results)
+
+
+class BacktestTrade(BaseModel):
+    trade_date: str
+    action: Literal["BUY", "SELL"]
+    price: float
+    shares: int
+    cash_after: float
+    reason: str
+
+
+class BacktestEquityPoint(BaseModel):
+    trade_date: str
+    close: float
+    cash: float
+    shares: int
+    portfolio_value: float
+    signal_action: SignalAction
+
+
+class BacktestSummary(BaseModel):
+    initial_cash: float
+    final_value: float
+    total_return: float
+    benchmark_return: float
+    max_drawdown: float
+    trade_count: int
+    signal_count: int
+
+
+class BacktestResponse(BaseModel):
+    backtest_id: str
+    requested_at: datetime
+    ts_code: str
+    stock_name: str | None
+    date_range: dict[str, str]
+    n_days: int
+    summary: BacktestSummary
+    trades: list[BacktestTrade]
+    equity_curve: list[BacktestEquityPoint]
+
+    @classmethod
+    def create(
+        cls,
+        backtest_id: str,
+        ts_code: str,
+        stock_name: str | None,
+        date_range: dict[str, str],
+        n_days: int,
+        summary: BacktestSummary,
+        trades: list[BacktestTrade],
+        equity_curve: list[BacktestEquityPoint],
+    ) -> "BacktestResponse":
+        return cls(
+            backtest_id=backtest_id,
+            requested_at=datetime.now(UTC),
+            ts_code=ts_code,
+            stock_name=stock_name,
+            date_range=date_range,
+            n_days=n_days,
+            summary=summary,
+            trades=trades,
+            equity_curve=equity_curve,
+        )
 
 
 class ApiEnvelope(BaseModel):

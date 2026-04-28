@@ -121,3 +121,23 @@ Frontend `npm run test` passed with 2 tests. Frontend `npm run build` passed.
 
 ### Result
 Clicking `Run scan` now shows visible Chinese progress logs while data is being fetched and completion logs after results return.
+
+## Step 7
+
+### User Instruction
+到目前为止做的非常好， 先 commit push merge，然后我们添加回测功能
+
+### Understanding
+The completed Phase 1 scaffold should be committed and pushed to remote `main`, then a first backtest feature should be implemented.
+
+### Plan
+Run full verification, stage only source/docs/lockfiles, commit with a conventional commit message, push to `origin/main`, then add a local-first backtest endpoint and frontend panel with tests.
+
+### Actions Taken
+Committed and pushed `84fbd0e feat: scaffold Tushare signal dashboard` to `origin/main`. Added backend backtest models, service, and `/api/backtests`. Added tests for long-only backtest simulation and API validation. Added frontend backtest API client, form, summary metrics, and trade list.
+
+### Validation
+Before commit, backend `pytest -v`, frontend `npm run test`, and frontend `npm run build` passed. After backtest implementation, backend and frontend test/build checks were rerun.
+
+### Result
+The scaffold is merged into remote `main`, and the first backtest implementation is in the working tree pending its own commit.

@@ -1,7 +1,7 @@
-import { Activity, AlertTriangle, BarChart3, CheckCircle2, Loader2, Play, ShieldCheck } from "lucide-react"
+import { Activity, AlertTriangle, BarChart3, CheckCircle2, History, Loader2, Play, ShieldCheck } from "lucide-react"
 import { FormEvent, useMemo, useState } from "react"
 
-import { runScan, ScanResponse, StockScanResult } from "./api"
+import { BacktestResponse, runBacktest, runScan, ScanResponse, StockScanResult } from "./api"
 
 const defaultCodes = "600519\n000001"
 
@@ -10,6 +10,13 @@ export function App() {
   const [nDays, setNDays] = useState(10)
   const [scan, setScan] = useState<ScanResponse | null>(null)
   const [scanLogs, setScanLogs] = useState<string[]>([])
+  const [backtestCode, setBacktestCode] = useState("600519")
+  const [backtestStart, setBacktestStart] = useState("20260101")
+  const [backtestEnd, setBacktestEnd] = useState("20260428")
+  const [initialCash, setInitialCash] = useState(100000)
+  const [backtest, setBacktest] = useState<BacktestResponse | null>(null)
+  const [backtestError, setBacktestError] = useState<string | null>(null)
+  const [isBacktesting, setIsBacktesting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
 
@@ -48,6 +55,26 @@ export function App() {
       setScanLogs((currentLogs) => [...currentLogs, "扫描失败，请检查后端服务、Tushare token 或接口权限。"])
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  async function handleBacktest(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setIsBacktesting(true)
+    setBacktestError(null)
+    try {
+      const nextBacktest = await runBacktest({
+        stockCode: backtestCode,
+        startDate: backtestStart,
+        endDate: backtestEnd,
+        nDays,
+        initialCash
+      })
+      setBacktest(nextBacktest)
+    } catch (caught) {
+      setBacktestError(caught instanceof Error ? caught.message : "Backtest request failed.")
+    } finally {
+      setIsBacktesting(false)
     }
   }
 
@@ -116,6 +143,57 @@ export function App() {
         </div>
 
         {scan ? <SignalTable results={scan.results} /> : <EmptyState />}
+      </section>
+
+      <section className="backtest-panel">
+        <div className="results-heading">
+          <div>
+            <p className="eyebrow">Historical simulation</p>
+            <h2>Backtest</h2>
+          </div>
+          <div className="scan-meta">
+            <History size={16} />
+            Long only
+          </div>
+        </div>
+
+        <form className="backtest-form" onSubmit={handleBacktest}>
+          <label className="field">
+            <span>Stock code</span>
+            <input aria-label="Backtest stock code" value={backtestCode} onChange={(event) => setBacktestCode(event.target.value)} />
+          </label>
+          <label className="field">
+            <span>Start date</span>
+            <input aria-label="Backtest start date" value={backtestStart} onChange={(event) => setBacktestStart(event.target.value)} />
+          </label>
+          <label className="field">
+            <span>End date</span>
+            <input aria-label="Backtest end date" value={backtestEnd} onChange={(event) => setBacktestEnd(event.target.value)} />
+          </label>
+          <label className="field">
+            <span>Initial cash</span>
+            <input
+              aria-label="Initial cash"
+              min={1}
+              type="number"
+              value={initialCash}
+              onChange={(event) => setInitialCash(Number(event.target.value))}
+            />
+          </label>
+          <button className="secondary-action" disabled={isBacktesting} type="submit">
+            <Play size={16} />
+            {isBacktesting ? "Backtesting" : "Run backtest"}
+          </button>
+        </form>
+
+        {backtestError ? (
+          <div className="error-banner" role="alert">
+            <AlertTriangle size={18} />
+            {backtestError}
+          </div>
+        ) : null}
+
+        {backtest ? <BacktestSummaryView backtest={backtest} /> : null}
       </section>
     </main>
   )
@@ -195,6 +273,62 @@ function SignalTable({ results }: { results: StockScanResult[] }) {
   )
 }
 
+function BacktestSummaryView({ backtest }: { backtest: BacktestResponse }) {
+  return (
+    <div className="backtest-output">
+      <div className="metric-grid">
+        <Metric label="Total return" value={formatSignedPercent(backtest.summary.total_return)} tone={backtest.summary.total_return >= 0 ? "good" : "bad"} />
+        <Metric label="Benchmark" value={formatSignedPercent(backtest.summary.benchmark_return)} />
+        <Metric label="Max drawdown" value={formatSignedPercent(backtest.summary.max_drawdown)} tone="bad" />
+        <Metric label="Trades" value={String(backtest.summary.trade_count)} />
+        <Metric label="Signals" value={String(backtest.summary.signal_count)} />
+        <Metric label="Final value" value={formatCurrency(backtest.summary.final_value)} />
+      </div>
+
+      <div className="trade-list">
+        <h3>{backtest.ts_code} {backtest.stock_name ?? ""}</h3>
+        {backtest.trades.length > 0 ? (
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Action</th>
+                <th>Price</th>
+                <th>Shares</th>
+                <th>Reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {backtest.trades.map((trade) => (
+                <tr key={`${trade.trade_date}-${trade.action}-${trade.price}`}>
+                  <td>{trade.trade_date}</td>
+                  <td>
+                    <span className={`signal signal-${trade.action === "BUY" ? "buy" : "sell"}`}>{trade.action}</span>
+                  </td>
+                  <td>{formatNumber(trade.price)}</td>
+                  <td>{trade.shares}</td>
+                  <td className="reason-cell">{trade.reason}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <p className="muted-text">No trades were triggered in this date range.</p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function Metric({ label, value, tone }: { label: string; value: string; tone?: "good" | "bad" }) {
+  return (
+    <div className="metric">
+      <span>{label}</span>
+      <strong className={tone ? `metric-${tone}` : undefined}>{value}</strong>
+    </div>
+  )
+}
+
 function formatPercent(value: number) {
   return `${Math.round(value * 100)}%`
 }
@@ -209,4 +343,10 @@ function formatSignedPercent(value: number | string | null | undefined) {
 
 function formatNumber(value: number | string | null | undefined) {
   return typeof value === "number" ? value.toFixed(2) : "-"
+}
+
+function formatCurrency(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 0
+  }).format(value)
 }

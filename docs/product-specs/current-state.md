@@ -33,6 +33,16 @@ Implemented first-screen behavior:
 - scan log panel that shows input parsing, local API connection, Tushare data fetch progress, per-stock row counts, and completion state
 - result table with code, name, signal, confidence, latest close, N-day return, chip row count, data quality, and primary reason
 
+Implemented first backtest behavior:
+
+- single-stock backtest form
+- `YYYYMMDD` start/end date inputs
+- initial cash input
+- long-only simulation using rolling strategy signals
+- signal generated from a completed rolling window and executed on the next trading day's close
+- summary metrics for total return, benchmark return, max drawdown, trade count, signal count, and final value
+- trade list with execution date, action, price, shares, and reason
+
 ## Product Boundaries
 
 - First version is local use only.
