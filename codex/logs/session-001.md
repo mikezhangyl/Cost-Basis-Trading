@@ -201,3 +201,23 @@ Documentation-only change. No code or tests were run.
 
 ### Result
 The intermediate research process is now persisted and can be used as the traceable basis for future strategy design.
+
+## Step 11
+
+### User Instruction
+好的 开始
+
+### Understanding
+Proceed with the agreed next steps: commit the current research traceability document, then write the `ChipChangeFeatureSet` design document before implementing any strategy code.
+
+### Plan
+First commit and push the existing research document. Then add a design document that defines formulas, source mapping, missing-data behavior, proposed output shape, API exposure direction, and backtest scoring direction for daily chip-change features.
+
+### Actions Taken
+Committed and pushed `7a49a47 docs: record chip change strategy research`. Added `docs/design/chip-change-feature-set.md` and linked it from `docs/design/index.md`.
+
+### Validation
+Documentation-only change after the commit. No code or tests were run.
+
+### Result
+The feature design now exists as a pre-implementation artifact. The next code step should be fixture-based tests for daily chip snapshots and window deltas.

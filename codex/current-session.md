@@ -2,4 +2,4 @@
 
 Current session file: `codex/logs/session-001.md`
 
-Next step number: `11`
+Next step number: `12`
