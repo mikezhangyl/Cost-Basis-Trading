@@ -71,6 +71,45 @@ class BacktestRequest(BaseModel):
         return value
 
 
+class ResearchRunRequest(BaseModel):
+    stock_code: str = Field(min_length=1, max_length=16)
+    start_dates: list[str] = Field(min_length=1, max_length=60)
+    window_days: int = Field(default=10, ge=2, le=120)
+    candidate_strategy_ids: list[str] = Field(
+        default_factory=lambda: ["composite_baseline", "market_context_followthrough"],
+        min_length=1,
+        max_length=10,
+    )
+
+    @field_validator("stock_code")
+    @classmethod
+    def validate_stock_code(cls, value: str) -> str:
+        return value.strip().upper()
+
+    @field_validator("start_dates")
+    @classmethod
+    def validate_start_dates(cls, value: list[str]) -> list[str]:
+        cleaned = [date.strip() for date in value if date.strip()]
+        if not cleaned:
+            raise ValueError("At least one start date is required.")
+        for date in cleaned:
+            if len(date) != 8 or not date.isdigit():
+                raise ValueError("Each start date must use YYYYMMDD format.")
+        if len(set(cleaned)) != len(cleaned):
+            raise ValueError("Duplicate start dates are not allowed.")
+        return cleaned
+
+    @field_validator("candidate_strategy_ids")
+    @classmethod
+    def validate_candidate_strategy_ids(cls, value: list[str]) -> list[str]:
+        cleaned = [strategy_id.strip() for strategy_id in value if strategy_id.strip()]
+        if not cleaned:
+            raise ValueError("At least one candidate strategy is required.")
+        if len(set(cleaned)) != len(cleaned):
+            raise ValueError("Duplicate candidate strategy ids are not allowed.")
+        return cleaned
+
+
 class StrategySignal(BaseModel):
     strategy_name: str
     action: SignalAction
@@ -170,6 +209,79 @@ class BacktestResponse(BaseModel):
             market_context=market_context,
             observations=observations,
             row_counts=row_counts,
+        )
+
+
+class ResearchObservationScore(BaseModel):
+    offset_days: int
+    period_return: float
+    match_label: Literal["MATCH", "MISMATCH", "NEUTRAL"]
+    directional_score: float
+
+
+class ResearchStrategyScore(BaseModel):
+    strategy_id: str
+    signal: StrategySignal
+    observation_scores: list[ResearchObservationScore]
+    average_directional_score: float
+    match_count: int
+    mismatch_count: int
+    neutral_count: int
+
+
+class ResearchAggregateScore(BaseModel):
+    strategy_id: str
+    sample_count: int
+    average_directional_score: float
+    match_count: int
+    mismatch_count: int
+    neutral_count: int
+
+
+class ResearchSampleResult(BaseModel):
+    sample_id: str
+    start_date: str
+    signal_date: str
+    status: Literal["completed", "invalid", "failed"]
+    artifact_dir: str
+    strategies: list[ResearchStrategyScore]
+
+
+class ResearchRunResponse(BaseModel):
+    run_id: str
+    requested_at: datetime
+    ts_code: str
+    stock_name: str | None
+    window_days: int
+    observation_offsets: list[int]
+    sample_count: int
+    artifact_dir: str
+    aggregate_scores: list[ResearchAggregateScore]
+    samples: list[ResearchSampleResult]
+
+    @classmethod
+    def create(
+        cls,
+        run_id: str,
+        ts_code: str,
+        stock_name: str | None,
+        window_days: int,
+        observation_offsets: list[int],
+        artifact_dir: str,
+        aggregate_scores: list[ResearchAggregateScore],
+        samples: list[ResearchSampleResult],
+    ) -> "ResearchRunResponse":
+        return cls(
+            run_id=run_id,
+            requested_at=datetime.now(UTC),
+            ts_code=ts_code,
+            stock_name=stock_name,
+            window_days=window_days,
+            observation_offsets=observation_offsets,
+            sample_count=len(samples),
+            artifact_dir=artifact_dir,
+            aggregate_scores=aggregate_scores,
+            samples=samples,
         )
 
 

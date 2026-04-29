@@ -69,6 +69,46 @@ export type BacktestResponse = {
   row_counts: Record<string, number>
 }
 
+export type ResearchRunResponse = {
+  run_id: string
+  requested_at: string
+  ts_code: string
+  stock_name: string | null
+  window_days: number
+  observation_offsets: number[]
+  sample_count: number
+  artifact_dir: string
+  aggregate_scores: Array<{
+    strategy_id: string
+    sample_count: number
+    average_directional_score: number
+    match_count: number
+    mismatch_count: number
+    neutral_count: number
+  }>
+  samples: Array<{
+    sample_id: string
+    start_date: string
+    signal_date: string
+    status: "completed" | "invalid" | "failed"
+    artifact_dir: string
+    strategies: Array<{
+      strategy_id: string
+      signal: StrategySignal
+      observation_scores: Array<{
+        offset_days: number
+        period_return: number
+        match_label: "MATCH" | "MISMATCH" | "NEUTRAL"
+        directional_score: number
+      }>
+      average_directional_score: number
+      match_count: number
+      mismatch_count: number
+      neutral_count: number
+    }>
+  }>
+}
+
 type ApiEnvelope<T> = {
   success: boolean
   data: T | null
@@ -112,6 +152,29 @@ export async function runBacktest(params: {
   const envelope = (await response.json()) as ApiEnvelope<BacktestResponse>
   if (!response.ok || !envelope.success || !envelope.data) {
     throw new Error(envelope.error ?? "Backtest request failed.")
+  }
+  return envelope.data
+}
+
+export async function runResearchRun(params: {
+  stockCode: string
+  startDates: string[]
+  windowDays: number
+}): Promise<ResearchRunResponse> {
+  const response = await fetch("/api/research-runs", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      stock_code: params.stockCode,
+      start_dates: params.startDates,
+      window_days: params.windowDays
+    })
+  })
+  const envelope = (await response.json()) as ApiEnvelope<ResearchRunResponse>
+  if (!response.ok || !envelope.success || !envelope.data) {
+    throw new Error(envelope.error ?? "Research run request failed.")
   }
   return envelope.data
 }

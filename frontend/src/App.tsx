@@ -1,7 +1,7 @@
 import { Activity, AlertTriangle, BarChart3, CheckCircle2, History, Loader2, Play, ShieldCheck } from "lucide-react"
 import { FormEvent, useMemo, useState } from "react"
 
-import { BacktestResponse, runBacktest, runScan, ScanResponse, StockScanResult } from "./api"
+import { BacktestResponse, ResearchRunResponse, runBacktest, runResearchRun, runScan, ScanResponse, StockScanResult } from "./api"
 
 const defaultCodes = "000001"
 
@@ -16,6 +16,12 @@ export function App() {
   const [backtest, setBacktest] = useState<BacktestResponse | null>(null)
   const [backtestError, setBacktestError] = useState<string | null>(null)
   const [isBacktesting, setIsBacktesting] = useState(false)
+  const [researchCode, setResearchCode] = useState("000001")
+  const [researchStartDates, setResearchStartDates] = useState("20260301\n20260306")
+  const [researchWindowDays, setResearchWindowDays] = useState(10)
+  const [researchRun, setResearchRun] = useState<ResearchRunResponse | null>(null)
+  const [researchError, setResearchError] = useState<string | null>(null)
+  const [isResearching, setIsResearching] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
 
@@ -72,6 +78,28 @@ export function App() {
       setBacktestError(caught instanceof Error ? caught.message : "Backtest request failed.")
     } finally {
       setIsBacktesting(false)
+    }
+  }
+
+  async function handleResearchRun(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const startDates = researchStartDates
+      .split(/[\n,，\s]+/)
+      .map((date) => date.trim())
+      .filter(Boolean)
+    setIsResearching(true)
+    setResearchError(null)
+    try {
+      const nextRun = await runResearchRun({
+        stockCode: researchCode,
+        startDates,
+        windowDays: researchWindowDays
+      })
+      setResearchRun(nextRun)
+    } catch (caught) {
+      setResearchError(caught instanceof Error ? caught.message : "Research run request failed.")
+    } finally {
+      setIsResearching(false)
     }
   }
 
@@ -188,6 +216,59 @@ export function App() {
         ) : null}
 
         {backtest ? <BacktestSummaryView backtest={backtest} /> : null}
+      </section>
+
+      <section className="research-panel">
+        <div className="results-heading">
+          <div>
+            <p className="eyebrow">Agent workflow prototype</p>
+            <h2>Research run</h2>
+          </div>
+          <div className="scan-meta">
+            <History size={16} />
+            Artifact trace
+          </div>
+        </div>
+
+        <form className="research-form" onSubmit={handleResearchRun}>
+          <label className="field">
+            <span>Stock code</span>
+            <input aria-label="Research stock code" value={researchCode} onChange={(event) => setResearchCode(event.target.value)} />
+          </label>
+          <label className="field">
+            <span>Start dates</span>
+            <textarea
+              aria-label="Research start dates"
+              rows={4}
+              value={researchStartDates}
+              onChange={(event) => setResearchStartDates(event.target.value)}
+            />
+          </label>
+          <label className="field">
+            <span>Window days</span>
+            <input
+              aria-label="Research window days"
+              min={2}
+              max={120}
+              type="number"
+              value={researchWindowDays}
+              onChange={(event) => setResearchWindowDays(Number(event.target.value))}
+            />
+          </label>
+          <button className="secondary-action" disabled={isResearching} type="submit">
+            <Play size={16} />
+            {isResearching ? "Researching" : "Run research"}
+          </button>
+        </form>
+
+        {researchError ? (
+          <div className="error-banner" role="alert">
+            <AlertTriangle size={18} />
+            {researchError}
+          </div>
+        ) : null}
+
+        {researchRun ? <ResearchRunView researchRun={researchRun} /> : null}
       </section>
     </main>
   )
@@ -311,6 +392,70 @@ function BacktestSummaryView({ backtest }: { backtest: BacktestResponse }) {
                   </span>
                 </td>
                 <td className="reason-cell">{observation.interpretation}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+function ResearchRunView({ researchRun }: { researchRun: ResearchRunResponse }) {
+  return (
+    <div className="research-output">
+      <div className="metric-grid">
+        <Metric label="Run ID" value={researchRun.run_id} />
+        <Metric label="Samples" value={`${researchRun.sample_count} samples / ${researchRun.window_days} days`} />
+        <Metric label="Strategies" value={String(researchRun.aggregate_scores.length)} />
+        <Metric label="Offsets" value={researchRun.observation_offsets.map((offset) => `N+${offset}`).join(" / ")} />
+      </div>
+
+      <div className="backtest-detail">
+        <h3>{researchRun.ts_code} {researchRun.stock_name ?? ""}</h3>
+        <p className="muted-text">{researchRun.artifact_dir}</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Strategy</th>
+              <th>Samples</th>
+              <th>Score</th>
+              <th>Match</th>
+              <th>Mismatch</th>
+              <th>Neutral</th>
+            </tr>
+          </thead>
+          <tbody>
+            {researchRun.aggregate_scores.map((score) => (
+              <tr key={score.strategy_id}>
+                <td className="code-cell">{score.strategy_id}</td>
+                <td>{score.sample_count}</td>
+                <td>{formatSignedPercent(score.average_directional_score)}</td>
+                <td>{score.match_count}</td>
+                <td>{score.mismatch_count}</td>
+                <td>{score.neutral_count}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <table>
+          <thead>
+            <tr>
+              <th>Sample</th>
+              <th>Start</th>
+              <th>Signal date</th>
+              <th>Status</th>
+              <th>Artifacts</th>
+            </tr>
+          </thead>
+          <tbody>
+            {researchRun.samples.map((sample) => (
+              <tr key={sample.sample_id}>
+                <td className="code-cell">{sample.sample_id}</td>
+                <td>{sample.start_date}</td>
+                <td>{sample.signal_date}</td>
+                <td>{sample.status}</td>
+                <td className="reason-cell">{sample.artifact_dir}</td>
               </tr>
             ))}
           </tbody>

@@ -43,6 +43,17 @@ Implemented first backtest behavior:
 - observation windows are `N+1`, `N+3`, and `N+5`
 - output includes the suggested action, confidence, reason, market context, each observation date, each observation close, each period return, and whether the movement matches the original `BUY` or `SELL` suggestion
 
+Implemented first research-run behavior:
+
+- single-stock research workflow prototype
+- user enters one stock code, multiple sample start dates, and window size `M`
+- backend runs each sample as an isolated analysis window
+- each sample freezes candidate strategy signals before scoring future returns
+- initial candidate strategies are `composite_baseline` and `market_context_followthrough`
+- scoring uses `N+1`, `N+3`, and `N+5` directional returns
+- backend writes trace artifacts under `docs/research-runs/<run_id>/`
+- frontend displays run id, artifact directory, aggregate strategy scores, and per-sample artifact paths
+
 ## Product Boundaries
 
 - First version is local use only.

@@ -43,6 +43,21 @@ This first backtest surface is a single-window historical validation, not a port
 7. The `M + 1`, `M + 3`, and `M + 5` trading days are observation checkpoints.
 8. The API returns signal details, market context, each observation close, period return, and match label.
 
+### Research Run Flow
+
+This first research-run surface is the implementation seed for the artifact-driven multi-agent workflow. Runtime roles are deterministic service modules for now; AI-agent API calls will be added behind the same role boundaries later.
+
+1. The user enters one stock code, multiple sample start dates, and window size `M`.
+2. The backend creates a `run_id` and writes `run-config.json`.
+3. For each sample start date, the backend resolves enough forward trading days for `M + 5`.
+4. The first `M` trading days form the analysis window and the `M`th trading day is the signal date.
+5. Data-collection calls are recorded to `api-calls.jsonl`.
+6. Feature artifacts are written under `samples/<sample_id>/features/`.
+7. Candidate Strategy Agent outputs are written as frozen signal artifacts under `samples/<sample_id>/signals/`.
+8. The Backtest Evaluator scores each frozen signal against `N+1`, `N+3`, and `N+5`.
+9. Backtest score artifacts and manifests are written under `samples/<sample_id>/backtest/`.
+10. The API returns aggregate strategy scores and sample artifact paths for the frontend.
+
 ## API Contract Direction
 
 Use a stable response envelope:
@@ -65,6 +80,10 @@ Per-stock errors belong in `results[]` so one bad symbol does not fail the whole
 Backtest endpoint:
 
 - `POST /api/backtests`
+
+Research-run endpoint:
+
+- `POST /api/research-runs`
 
 ## Strategy Boundary
 

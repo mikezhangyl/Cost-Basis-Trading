@@ -281,3 +281,23 @@ Documentation-only change. No code or tests were run.
 
 ### Result
 The agent collaboration model is now persisted as a formal design artifact for future implementation and interview explanation.
+
+## Step 15
+
+### User Instruction
+commit，然后让我们开始实现， 先把一个股票代码的分析端到端走通， 我会给你 ai agent 的 api 接入方式
+
+### Understanding
+First commit the multi-agent workflow design document, then implement the first narrow end-to-end research workflow for one stock code. The implementation should not depend on the AI-agent API yet; it should provide deterministic role boundaries and artifact handoffs that can later be wired to the user's AI-agent API.
+
+### Plan
+Commit the design document. Add tests first for research-run service artifacts, API validation, and frontend rendering. Implement a deterministic research-run orchestrator for one stock with multiple sample start dates, two candidate strategies, frozen signal artifacts, `N+1/N+3/N+5` scoring, and UI summary.
+
+### Actions Taken
+Committed `112f860 docs: define multi-agent research workflow`. Added `ResearchRunRequest` and response models, `ResearchRunService`, data-call logging wrapper, candidate strategy module, `/api/research-runs`, and a frontend Research Run panel. The first two strategy roles are `composite_baseline` and `market_context_followthrough`. A live local run for `000001` with start dates `20260301` and `20260306` created trace artifacts under `docs/research-runs/run-20260429-103324-358e542e/`.
+
+### Validation
+Backend `pytest -v` passed with 15 tests. Frontend `npm run test` passed with 4 tests. Frontend `npm run build` passed. `git diff --check` passed. Live `POST /api/research-runs` returned a successful run for `000001.SZ`.
+
+### Result
+The first single-stock research workflow now runs end to end locally with multiple sample start dates, multiple candidate strategies, aggregate scoring, and per-run artifact trace logs.

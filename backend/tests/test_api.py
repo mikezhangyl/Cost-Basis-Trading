@@ -37,3 +37,18 @@ def test_backtest_validates_date_format() -> None:
     )
 
     assert response.status_code == 422
+
+
+def test_research_run_validates_start_date_format() -> None:
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/api/research-runs",
+        json={
+            "stock_code": "000001",
+            "start_dates": ["2026-01-01"],
+            "window_days": 10,
+        },
+    )
+
+    assert response.status_code == 422

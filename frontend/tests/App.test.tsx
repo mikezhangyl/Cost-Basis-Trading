@@ -105,6 +105,69 @@ const backtestResponse = {
   error: null
 }
 
+const researchRunResponse = {
+  success: true,
+  data: {
+    run_id: "run-test-1",
+    requested_at: "2026-04-29T15:00:00Z",
+    ts_code: "000001.SZ",
+    stock_name: "平安银行",
+    window_days: 10,
+    observation_offsets: [1, 3, 5],
+    sample_count: 2,
+    artifact_dir: "docs/research-runs/run-test-1",
+    aggregate_scores: [
+      {
+        strategy_id: "composite_baseline",
+        sample_count: 2,
+        average_directional_score: 0.012,
+        match_count: 3,
+        mismatch_count: 1,
+        neutral_count: 2,
+      },
+      {
+        strategy_id: "market_context_followthrough",
+        sample_count: 2,
+        average_directional_score: 0.018,
+        match_count: 4,
+        mismatch_count: 1,
+        neutral_count: 1,
+      }
+    ],
+    samples: [
+      {
+        sample_id: "000001.SZ-20260301-N10",
+        start_date: "20260301",
+        signal_date: "20260313",
+        status: "completed",
+        artifact_dir: "docs/research-runs/run-test-1/samples/000001.SZ-20260301-N10",
+        strategies: [
+          {
+            strategy_id: "composite_baseline",
+            signal: {
+              strategy_name: "trend_confirmed_chip_signal",
+              action: "HOLD",
+              confidence: 0.5,
+              reasons: ["筹码与价格趋势混合，暂不确认方向优势。"],
+              features: { latest_close: 10.9 }
+            },
+            observation_scores: [
+              { offset_days: 1, period_return: -0.001, match_label: "NEUTRAL", directional_score: -0.001 },
+              { offset_days: 3, period_return: 0.003, match_label: "NEUTRAL", directional_score: -0.003 },
+              { offset_days: 5, period_return: -0.014, match_label: "NEUTRAL", directional_score: -0.014 }
+            ],
+            average_directional_score: -0.006,
+            match_count: 0,
+            mismatch_count: 0,
+            neutral_count: 3,
+          }
+        ]
+      }
+    ]
+  },
+  error: null
+}
+
 describe("App", () => {
   beforeEach(() => {
     vi.stubGlobal(
@@ -198,5 +261,29 @@ describe("App", () => {
     expect(screen.getByText("阳线/阴线")).toBeInTheDocument()
     expect(screen.getByText("7 / 2")).toBeInTheDocument()
     expect(screen.getByText("N+5 下跌，买入建议阶段未得到验证。")).toBeInTheDocument()
+  })
+
+  it("runs a research workflow and renders strategy scores with artifact path", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => researchRunResponse
+    } as Response)
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(screen.getByRole("button", { name: /run research/i }))
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(
+      "/api/research-runs",
+      expect.objectContaining({
+        method: "POST"
+      })
+    ))
+    expect(await screen.findByText("run-test-1")).toBeInTheDocument()
+    expect(screen.getByText("000001.SZ 平安银行")).toBeInTheDocument()
+    expect(screen.getByText("2 samples / 10 days")).toBeInTheDocument()
+    expect(screen.getByText("market_context_followthrough")).toBeInTheDocument()
+    expect(screen.getByText("+1.80%")).toBeInTheDocument()
+    expect(screen.getByText("docs/research-runs/run-test-1")).toBeInTheDocument()
   })
 })
