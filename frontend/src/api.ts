@@ -125,6 +125,30 @@ type ApiEnvelope<T> = {
   error: string | null
 }
 
+async function parseEnvelope<T>(response: Response, fallbackMessage: string): Promise<T> {
+  const envelope = await readEnvelope<T>(response, fallbackMessage)
+  if (!response.ok || !envelope.success || !envelope.data) {
+    throw new Error(envelope.error ?? fallbackMessage)
+  }
+  return envelope.data
+}
+
+async function readEnvelope<T>(response: Response, fallbackMessage: string): Promise<ApiEnvelope<T>> {
+  const messagePrefix = fallbackMessage.replace(/[.。]+$/, "")
+  if (typeof response.text === "function") {
+    const payload = await response.text()
+    if (!payload.trim()) {
+      throw new Error(`${messagePrefix}: empty response from server.`)
+    }
+    try {
+      return JSON.parse(payload) as ApiEnvelope<T>
+    } catch {
+      throw new Error(`${messagePrefix}: server returned non-JSON response.`)
+    }
+  }
+  return (await response.json()) as ApiEnvelope<T>
+}
+
 export async function runScan(stockCodes: string[], nDays: number): Promise<ScanResponse> {
   const response = await fetch("/api/scans", {
     method: "POST",
@@ -136,11 +160,7 @@ export async function runScan(stockCodes: string[], nDays: number): Promise<Scan
       n_days: nDays
     })
   })
-  const envelope = (await response.json()) as ApiEnvelope<ScanResponse>
-  if (!response.ok || !envelope.success || !envelope.data) {
-    throw new Error(envelope.error ?? "Scan request failed.")
-  }
-  return envelope.data
+  return parseEnvelope<ScanResponse>(response, "Scan request failed.")
 }
 
 export async function runBacktest(params: {
@@ -159,11 +179,7 @@ export async function runBacktest(params: {
       window_days: params.windowDays
     })
   })
-  const envelope = (await response.json()) as ApiEnvelope<BacktestResponse>
-  if (!response.ok || !envelope.success || !envelope.data) {
-    throw new Error(envelope.error ?? "Backtest request failed.")
-  }
-  return envelope.data
+  return parseEnvelope<BacktestResponse>(response, "Backtest request failed.")
 }
 
 export async function runResearchRun(params: {
@@ -182,9 +198,5 @@ export async function runResearchRun(params: {
       window_days: params.windowDays
     })
   })
-  const envelope = (await response.json()) as ApiEnvelope<ResearchRunResponse>
-  if (!response.ok || !envelope.success || !envelope.data) {
-    throw new Error(envelope.error ?? "Research run request failed.")
-  }
-  return envelope.data
+  return parseEnvelope<ResearchRunResponse>(response, "Research run request failed.")
 }

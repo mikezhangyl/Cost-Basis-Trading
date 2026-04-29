@@ -300,4 +300,18 @@ describe("App", () => {
     expect(screen.getByText("未发现未来函数风险，但样本数量较少。")).toBeInTheDocument()
     expect(screen.getByText("docs/research-runs/run-test-1/aggregate/final_report.md")).toBeInTheDocument()
   })
+
+  it("shows a readable error when research workflow returns an empty response", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: false,
+      status: 502,
+      text: async () => ""
+    } as Response)
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(screen.getByRole("button", { name: /run research/i }))
+
+    expect(await screen.findByText("Research run request failed: empty response from server.")).toBeInTheDocument()
+  })
 })
