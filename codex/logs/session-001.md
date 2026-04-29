@@ -181,3 +181,23 @@ Backend `pytest -v` passed with 13 tests. Frontend `npm run test` passed with 3 
 
 ### Result
 Backtest validation now evaluates N+3, N+7, and N+15 forward windows instead of only N+1.
+
+## Step 10
+
+### User Instruction
+请把这个研究的中间过程落盘， 我希望后期可追溯，上面这份写的非常好。后面我还有进一步的想法
+
+### Understanding
+The chip-change strategy research should be durable and traceable before any further implementation. The document must preserve source links, intermediate reasoning, evidence levels, candidate indicators, and which ideas are source-backed versus project hypotheses.
+
+### Plan
+Create a dedicated reference document for daily chip-change strategy traceability, link it from the references index, and update the session memory.
+
+### Actions Taken
+Added `docs/references/chip-change-strategy-traceability.md`. The document records the corrected research direction, source log, evidence-level taxonomy, traceability matrix, candidate rule templates, Tushare data mapping, research decisions, open questions, and next research step. Linked it from `docs/references/index.md`.
+
+### Validation
+Documentation-only change. No code or tests were run.
+
+### Result
+The intermediate research process is now persisted and can be used as the traceable basis for future strategy design.
