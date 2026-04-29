@@ -1,3 +1,5 @@
+import pytest
+
 from app.domain.models import BacktestRequest, ChipDistributionPoint, DailyPriceBar
 from app.services.backtest_service import BacktestService
 
@@ -45,6 +47,28 @@ class FakeBacktestClient:
             116,
             118,
         ]
+        volumes = [
+            1000,
+            1000,
+            1000,
+            1000,
+            1500,
+            1600,
+            1700,
+            1800,
+            1600,
+            1500,
+            1400,
+            1300,
+            1400,
+            1500,
+            1600,
+            1700,
+            1800,
+            1900,
+            2000,
+            2100,
+        ]
         return [
             DailyPriceBar(
                 ts_code=ts_code,
@@ -55,10 +79,10 @@ class FakeBacktestClient:
                 close=close,
                 pre_close=None,
                 pct_chg=None,
-                vol=1000,
-                amount=10000,
+                vol=volume,
+                amount=volume * 10,
             )
-            for trade_date, close in zip(self._dates(), closes, strict=True)
+            for trade_date, close, volume in zip(self._dates(), closes, volumes, strict=True)
         ]
 
     def _dates(self) -> list[str]:
@@ -102,9 +126,17 @@ def test_backtest_service_evaluates_single_window_and_forward_observations() -> 
     assert result.window_days == 5
     assert result.analysis_range == {"start_date": "20260401", "end_date": "20260408"}
     assert result.signal_date == "20260408"
-    assert [observation.offset_days for observation in result.observations] == [3, 7, 15]
+    assert [observation.offset_days for observation in result.observations] == [1, 3, 5]
     assert result.signal.action == "HOLD"
     assert result.observations[0].signal_close == 104
-    assert result.observations[0].observation_close == 116
-    assert result.observations[0].period_return == 0.11538461538461539
+    assert result.observations[0].observation_close == 108
+    assert result.observations[0].period_return == 0.038461538461538464
     assert result.observations[0].match_label == "NEUTRAL"
+    assert result.market_context.price_return == 0.04
+    assert result.market_context.volume_ratio_5 == 1.3636363636363635
+    assert result.market_context.amount_ratio_5 == 1.3636363636363635
+    assert result.market_context.volume_trend == 0.5
+    assert result.market_context.close_vs_ma5 == pytest.approx(0.0196078431372549)
+    assert result.market_context.doji_count == 0
+    assert result.market_context.bullish_candle_count == 5
+    assert result.market_context.bearish_candle_count == 0

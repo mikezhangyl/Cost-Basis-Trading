@@ -35,13 +35,13 @@
 This first backtest surface is a single-window historical validation, not a portfolio simulator.
 
 1. The user enters one stock code, a start date, and window size `M`.
-2. The backend resolves enough forward trading days for `M + 15`.
+2. The backend resolves enough forward trading days for `M + 5`.
 3. The first `M` trading days form the analysis window.
 4. The `M`th trading day is the signal date.
 5. The backend fetches `cyq_chips` and daily price bars for the analysis window.
 6. The same signal strategy used by live scans generates a `BUY`, `HOLD`, or `SELL` recommendation on the signal date.
-7. The `M + 3`, `M + 7`, and `M + 15` trading days are observation checkpoints.
-8. The API returns signal details plus each observation close, period return, and match label.
+7. The `M + 1`, `M + 3`, and `M + 5` trading days are observation checkpoints.
+8. The API returns signal details, market context, each observation close, period return, and match label.
 
 ## API Contract Direction
 

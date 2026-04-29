@@ -116,6 +116,21 @@ class BacktestObservationPoint(BaseModel):
     interpretation: str
 
 
+class MarketContextFeatureSet(BaseModel):
+    price_return: float | None
+    volume_ratio_5: float | None
+    amount_ratio_5: float | None
+    volume_trend: float | None
+    close_vs_ma5: float | None
+    close_vs_ma10: float | None
+    doji_count: int
+    bullish_candle_count: int
+    bearish_candle_count: int
+    long_upper_shadow_count: int
+    long_lower_shadow_count: int
+    context_summary: str
+
+
 class BacktestResponse(BaseModel):
     backtest_id: str
     requested_at: datetime
@@ -125,6 +140,7 @@ class BacktestResponse(BaseModel):
     window_days: int
     signal_date: str
     signal: StrategySignal
+    market_context: MarketContextFeatureSet
     observations: list[BacktestObservationPoint]
     row_counts: dict[str, int]
 
@@ -138,6 +154,7 @@ class BacktestResponse(BaseModel):
         window_days: int,
         signal_date: str,
         signal: StrategySignal,
+        market_context: MarketContextFeatureSet,
         observations: list[BacktestObservationPoint],
         row_counts: dict[str, int],
     ) -> "BacktestResponse":
@@ -150,6 +167,7 @@ class BacktestResponse(BaseModel):
             window_days=window_days,
             signal_date=signal_date,
             signal=signal,
+            market_context=market_context,
             observations=observations,
             row_counts=row_counts,
         )

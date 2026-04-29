@@ -241,3 +241,23 @@ Documentation-only change. No code or tests were run.
 
 ### Result
 The agent research-loop design now captures the user's desired `N+1/N+3/N+5` validation, scoped experiment setup, and full traceability requirements.
+
+## Step 13
+
+### User Instruction
+很好， 你先做吧， 挑选一个股票代码， 我先做一个完整的 e2e 看看
+
+### Understanding
+Build a narrow end-to-end slice for browser validation. Use a single default stock code, make the backtest windows match `N+1`, `N+3`, and `N+5`, and add the first market context layer covering volume, price trend, and candlestick structure.
+
+### Plan
+Use `000001` as the default validation stock because it has already worked in live local checks. Add tests first, then implement backend market context features, expose them in the API response, and render them in the frontend backtest panel.
+
+### Actions Taken
+Changed backtest observation offsets to `[1, 3, 5]`. Added `MarketContextFeatureSet` and a pure `build_market_context` feature extractor for price return, volume ratio, amount ratio, volume trend, close versus MA5/MA10, doji count, bullish/bearish candle counts, and long-shadow counts. Added a market context panel to the frontend and set the default stock input/backtest code to `000001`. Updated docs to reflect the new observation windows and market context block.
+
+### Validation
+Backend `pytest -v` passed with 13 tests. Frontend `npm run test` passed with 3 tests. Frontend `npm run build` passed.
+
+### Result
+The app now has a complete first E2E slice for `000001`: scan/backtest defaults, `N+1/N+3/N+5` validation, and visible volume/price/K-line context.

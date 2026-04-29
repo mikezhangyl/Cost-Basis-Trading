@@ -43,6 +43,20 @@ export type BacktestResponse = {
   window_days: number
   signal_date: string
   signal: StrategySignal
+  market_context: {
+    price_return: number | null
+    volume_ratio_5: number | null
+    amount_ratio_5: number | null
+    volume_trend: number | null
+    close_vs_ma5: number | null
+    close_vs_ma10: number | null
+    doji_count: number
+    bullish_candle_count: number
+    bearish_candle_count: number
+    long_upper_shadow_count: number
+    long_lower_shadow_count: number
+    context_summary: string
+  }
   observations: Array<{
     offset_days: number
     observation_date: string

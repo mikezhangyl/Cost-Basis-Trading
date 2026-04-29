@@ -401,6 +401,46 @@ th {
   background: #eee5c7;
 }
 
+.context-panel {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid rgba(36, 54, 44, 0.14);
+  background: #f6f8f4;
+}
+
+.context-panel h4 {
+  margin: 0 0 6px;
+  color: #25342c;
+  font-size: 0.9rem;
+}
+
+.context-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(110px, 1fr));
+  gap: 10px;
+}
+
+.context-item {
+  display: grid;
+  gap: 5px;
+  min-height: 58px;
+  padding: 10px;
+  border: 1px solid rgba(36, 54, 44, 0.12);
+  background: #fbfcf8;
+}
+
+.context-item span {
+  color: #66756c;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.context-item strong {
+  color: #17201b;
+  font-size: 1rem;
+}
+
 .trade-list,
 .backtest-detail {
   overflow-x: auto;
@@ -443,7 +483,8 @@ th {
   }
 
   .backtest-form,
-  .metric-grid {
+  .metric-grid,
+  .context-grid {
     grid-template-columns: 1fr;
   }
 }

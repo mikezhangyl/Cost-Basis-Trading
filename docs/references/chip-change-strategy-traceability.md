@@ -4,7 +4,7 @@
 
 Research note created on 2026-04-29.
 
-This document records the intermediate research process for strategies that use **daily changes in existing chip detail data**. It is intentionally separate from implementation code. No rule in this document should be treated as a production trading strategy until it has been backtested against this project's `N+3`, `N+7`, and `N+15` observation windows.
+This document records the intermediate research process for strategies that use **daily changes in existing chip detail data**. It is intentionally separate from implementation code. No rule in this document should be treated as a production trading strategy until it has been backtested against this project's target `N+1`, `N+3`, and `N+5` observation windows.
 
 ## Research Correction
 
@@ -111,7 +111,7 @@ AND price_return >= 0
 THEN SELL_WATCH
 ```
 
-Status: mostly project hypothesis. Must be proven with `N+3`, `N+7`, and `N+15` validation before use.
+Status: mostly project hypothesis. Must be proven with `N+1`, `N+3`, and `N+5` validation before use.
 
 ### Rule D: Concentration Improvement Hold
 
@@ -167,7 +167,7 @@ Potential daily aggregates:
 - Which concentration metric is most stable with Tushare's chip row granularity: 70/90 width, weighted standard deviation, entropy, or peak-percent concentration?
 - Should thresholds be fixed globally or learned by rolling percentile within each stock?
 - Should `HOLD` be treated as a neutral result in backtest scoring, or evaluated by drawdown avoidance?
-- Do `N+3`, `N+7`, and `N+15` need different rule weights?
+- Do `N+1`, `N+3`, and `N+5` need different rule weights?
 
 ## Next Research Step
 

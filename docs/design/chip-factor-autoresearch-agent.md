@@ -55,10 +55,9 @@ Reasoning:
 - `N+3` captures short swing behavior without drifting too far from the signal.
 - `N+5` captures roughly one trading week after the signal.
 
-Current implementation note:
+Implementation note:
 
-- The current app implementation was previously changed to `N+3`, `N+7`, and `N+15`.
-- The next implementation phase should migrate the backend, frontend, tests, and docs to `N+1`, `N+3`, and `N+5`.
+- The first app slice now uses `N+1`, `N+3`, and `N+5` for single-window validation.
 
 ## Research Scope Inputs
 

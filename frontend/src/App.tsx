@@ -3,15 +3,15 @@ import { FormEvent, useMemo, useState } from "react"
 
 import { BacktestResponse, runBacktest, runScan, ScanResponse, StockScanResult } from "./api"
 
-const defaultCodes = "600519\n000001"
+const defaultCodes = "000001"
 
 export function App() {
   const [stockInput, setStockInput] = useState(defaultCodes)
   const [nDays, setNDays] = useState(10)
   const [scan, setScan] = useState<ScanResponse | null>(null)
   const [scanLogs, setScanLogs] = useState<string[]>([])
-  const [backtestCode, setBacktestCode] = useState("600519")
-  const [backtestStart, setBacktestStart] = useState("20260101")
+  const [backtestCode, setBacktestCode] = useState("000001")
+  const [backtestStart, setBacktestStart] = useState("20260301")
   const [backtestWindowDays, setBacktestWindowDays] = useState(10)
   const [backtest, setBacktest] = useState<BacktestResponse | null>(null)
   const [backtestError, setBacktestError] = useState<string | null>(null)
@@ -150,7 +150,7 @@ export function App() {
           </div>
           <div className="scan-meta">
             <History size={16} />
-            M + 3 / 7 / 15 validation
+            N + 1 / 3 / 5 validation
           </div>
         </div>
 
@@ -273,9 +273,9 @@ function BacktestSummaryView({ backtest }: { backtest: BacktestResponse }) {
       <div className="metric-grid">
         <Metric label="Suggestion" value={backtest.signal.action} tone={signalTone(backtest.signal.action)} />
         <Metric label="Confidence" value={formatPercent(backtest.signal.confidence)} />
+        <Metric label="N+1" value={formatObservationReturn(backtest, 1)} tone={observationTone(backtest, 1)} />
         <Metric label="N+3" value={formatObservationReturn(backtest, 3)} tone={observationTone(backtest, 3)} />
-        <Metric label="N+7" value={formatObservationReturn(backtest, 7)} tone={observationTone(backtest, 7)} />
-        <Metric label="N+15" value={formatObservationReturn(backtest, 15)} tone={observationTone(backtest, 15)} />
+        <Metric label="N+5" value={formatObservationReturn(backtest, 5)} tone={observationTone(backtest, 5)} />
         <Metric label="Chip rows" value={String(backtest.row_counts.chip_points ?? 0)} />
       </div>
 
@@ -286,6 +286,7 @@ function BacktestSummaryView({ backtest }: { backtest: BacktestResponse }) {
           第 {backtest.window_days} 个交易日生成建议。
         </p>
         <p className="reason-callout">{backtest.signal.reasons[0]}</p>
+        <MarketContextPanel backtest={backtest} />
         <table>
           <thead>
             <tr>
@@ -319,6 +320,37 @@ function BacktestSummaryView({ backtest }: { backtest: BacktestResponse }) {
   )
 }
 
+function MarketContextPanel({ backtest }: { backtest: BacktestResponse }) {
+  const context = backtest.market_context
+  return (
+    <section className="context-panel" aria-label="Market context">
+      <div>
+        <h4>量价与K线确认</h4>
+        <p className="muted-text">{context.context_summary}</p>
+      </div>
+      <div className="context-grid">
+        <ContextItem label="区间涨跌" value={formatSignedPercent(context.price_return)} />
+        <ContextItem label="量比5日" value={formatRatio(context.volume_ratio_5)} />
+        <ContextItem label="额比5日" value={formatRatio(context.amount_ratio_5)} />
+        <ContextItem label="量能趋势" value={formatSignedPercent(context.volume_trend)} />
+        <ContextItem label="收盘/MA5" value={formatSignedPercent(context.close_vs_ma5)} />
+        <ContextItem label="阳线/阴线" value={`${context.bullish_candle_count} / ${context.bearish_candle_count}`} />
+        <ContextItem label="十字星" value={String(context.doji_count)} />
+        <ContextItem label="长上/长下影" value={`${context.long_upper_shadow_count} / ${context.long_lower_shadow_count}`} />
+      </div>
+    </section>
+  )
+}
+
+function ContextItem({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="context-item">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  )
+}
+
 function Metric({ label, value, tone }: { label: string; value: string; tone?: "good" | "bad" }) {
   return (
     <div className="metric">
@@ -342,6 +374,10 @@ function formatSignedPercent(value: number | string | null | undefined) {
 
 function formatNumber(value: number | string | null | undefined) {
   return typeof value === "number" ? value.toFixed(2) : "-"
+}
+
+function formatRatio(value: number | null | undefined) {
+  return typeof value === "number" ? `${value.toFixed(2)}x` : "-"
 }
 
 function signalTone(action: string) {

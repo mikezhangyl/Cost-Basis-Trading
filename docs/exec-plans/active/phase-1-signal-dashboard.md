@@ -100,7 +100,8 @@ Status: implemented after the initial scaffold commit.
 - Added single-window historical validation:
   - start date + `M` trading days
   - signal on day `M`
-  - observations on `M + 3`, `M + 7`, and `M + 15`
+  - observations on `M + 1`, `M + 3`, and `M + 5`
+  - first market context block for volume, price trend, and candlestick structure
 - Added backend tests for backtest service and API validation.
 - Added frontend backtest form, signal/observation metrics, and interpretation copy.
 

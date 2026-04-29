@@ -57,7 +57,30 @@ const backtestResponse = {
         n_day_return: 0.04
       }
     },
+    market_context: {
+      price_return: 0.04,
+      volume_ratio_5: 1.36,
+      amount_ratio_5: 1.36,
+      volume_trend: 0.5,
+      close_vs_ma5: 0.0196,
+      close_vs_ma10: 0.025,
+      doji_count: 1,
+      bullish_candle_count: 7,
+      bearish_candle_count: 2,
+      long_upper_shadow_count: 1,
+      long_lower_shadow_count: 2,
+      context_summary: "量能放大，价格站上 5 日均线，K 线结构偏多。"
+    },
     observations: [
+      {
+        offset_days: 1,
+        observation_date: "20260115",
+        signal_close: 1400,
+        observation_close: 1414,
+        period_return: 0.01,
+        match_label: "MATCH",
+        interpretation: "N+1 上涨，买入建议得到阶段验证。"
+      },
       {
         offset_days: 3,
         observation_date: "20260119",
@@ -68,22 +91,13 @@ const backtestResponse = {
         interpretation: "N+3 上涨，买入建议得到阶段验证。"
       },
       {
-        offset_days: 7,
-        observation_date: "20260123",
+        offset_days: 5,
+        observation_date: "20260121",
         signal_close: 1400,
         observation_close: 1372,
         period_return: -0.02,
         match_label: "MISMATCH",
-        interpretation: "N+7 下跌，买入建议阶段未得到验证。"
-      },
-      {
-        offset_days: 15,
-        observation_date: "20260204",
-        signal_close: 1400,
-        observation_close: 1456,
-        period_return: 0.04,
-        match_label: "MATCH",
-        interpretation: "N+15 上涨，买入建议得到阶段验证。"
+        interpretation: "N+5 下跌，买入建议阶段未得到验证。"
       }
     ],
     row_counts: { chip_points: 900, price_bars: 10 }
@@ -165,17 +179,24 @@ describe("App", () => {
     const user = userEvent.setup()
     render(<App />)
 
+    expect(screen.getByLabelText("Backtest stock code")).toHaveValue("000001")
     await user.click(screen.getByRole("button", { name: /run backtest/i }))
 
     expect(await screen.findByText("BUY")).toBeInTheDocument()
     expect(screen.getByText("78%")).toBeInTheDocument()
+    expect(screen.getAllByText("+1.00%").length).toBeGreaterThan(0)
     expect(screen.getAllByText("+2.00%").length).toBeGreaterThan(0)
     expect(screen.getAllByText("-2.00%").length).toBeGreaterThan(0)
-    expect(screen.getAllByText("+4.00%").length).toBeGreaterThan(0)
     expect(screen.getByText("600519.SH 贵州茅台")).toBeInTheDocument()
     expect(screen.getByText(/分析区间：20260101 至 20260114/)).toBeInTheDocument()
     expect(screen.getAllByText("匹配")).toHaveLength(2)
     expect(screen.getByText("不匹配")).toBeInTheDocument()
-    expect(screen.getByText("N+15 上涨，买入建议得到阶段验证。")).toBeInTheDocument()
+    expect(screen.getByText("量价与K线确认")).toBeInTheDocument()
+    expect(screen.getByText("量能放大，价格站上 5 日均线，K 线结构偏多。")).toBeInTheDocument()
+    expect(screen.getByText("量比5日")).toBeInTheDocument()
+    expect(screen.getAllByText("1.36x").length).toBeGreaterThan(0)
+    expect(screen.getByText("阳线/阴线")).toBeInTheDocument()
+    expect(screen.getByText("7 / 2")).toBeInTheDocument()
+    expect(screen.getByText("N+5 下跌，买入建议阶段未得到验证。")).toBeInTheDocument()
   })
 })

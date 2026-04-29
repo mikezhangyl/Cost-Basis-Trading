@@ -12,8 +12,9 @@ from app.domain.models import (
 from app.services.code_normalizer import normalize_ts_code
 from app.strategies.composite import evaluate_composite_signal
 from app.strategies.features import build_market_features
+from app.strategies.market_context import build_market_context
 
-OBSERVATION_OFFSETS = [3, 7, 15]
+OBSERVATION_OFFSETS = [1, 3, 5]
 
 
 class BacktestMarketDataClient(Protocol):
@@ -59,6 +60,7 @@ class BacktestService:
             raise DataUnavailableError(DataErrorCode.EMPTY_DATA, "Not enough price bars for requested backtest window.")
 
         signal = evaluate_composite_signal(build_market_features(ts_code, chips, analysis_prices))
+        market_context = build_market_context(analysis_prices)
         observations = [
             _build_observation(signal.action, signal_bar, _bar_for_date(prices, observation_date), offset)
             for offset, observation_date in observation_dates.items()
@@ -71,6 +73,7 @@ class BacktestService:
             window_days=request.window_days,
             signal_date=signal_date,
             signal=signal,
+            market_context=market_context,
             observations=observations,
             row_counts={"chip_points": len(chips), "price_bars": len(analysis_prices)},
         )
