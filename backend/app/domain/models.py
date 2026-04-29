@@ -247,6 +247,13 @@ class ResearchSampleResult(BaseModel):
     strategies: list[ResearchStrategyScore]
 
 
+class ResearchAiReviewSummary(BaseModel):
+    status: Literal["completed", "skipped", "failed"]
+    model: str | None = None
+    summary: str
+    artifact_refs: dict[str, str]
+
+
 class ResearchRunResponse(BaseModel):
     run_id: str
     requested_at: datetime
@@ -256,6 +263,7 @@ class ResearchRunResponse(BaseModel):
     observation_offsets: list[int]
     sample_count: int
     artifact_dir: str
+    ai_review: ResearchAiReviewSummary
     aggregate_scores: list[ResearchAggregateScore]
     samples: list[ResearchSampleResult]
 
@@ -268,6 +276,7 @@ class ResearchRunResponse(BaseModel):
         window_days: int,
         observation_offsets: list[int],
         artifact_dir: str,
+        ai_review: ResearchAiReviewSummary,
         aggregate_scores: list[ResearchAggregateScore],
         samples: list[ResearchSampleResult],
     ) -> "ResearchRunResponse":
@@ -280,6 +289,7 @@ class ResearchRunResponse(BaseModel):
             observation_offsets=observation_offsets,
             sample_count=len(samples),
             artifact_dir=artifact_dir,
+            ai_review=ai_review,
             aggregate_scores=aggregate_scores,
             samples=samples,
         )

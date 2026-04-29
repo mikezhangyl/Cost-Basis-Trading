@@ -78,6 +78,16 @@ export type ResearchRunResponse = {
   observation_offsets: number[]
   sample_count: number
   artifact_dir: string
+  ai_review: {
+    status: "completed" | "skipped" | "failed"
+    model: string | null
+    summary: string
+    artifact_refs: {
+      review: string
+      decisions: string
+      report: string
+    }
+  }
   aggregate_scores: Array<{
     strategy_id: string
     sample_count: number

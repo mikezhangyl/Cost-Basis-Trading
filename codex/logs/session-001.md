@@ -321,3 +321,23 @@ Backend `pytest -v` passed with 16 tests. Frontend `npm run test` passed with 4 
 
 ### Result
 The AI-agent API integration point is in place. Research runs can now perform deterministic scoring first, then optionally call DeepSeek for critic/report artifacts when `DEEPSEEK_API_KEY` is configured.
+
+## Step 17
+
+### User Instruction
+做的很好， 继续
+
+### Understanding
+Continue the research workflow implementation by making the AI-agent result visible in the app, not only persisted in local artifacts.
+
+### Plan
+Expose AI review status, model, summary, and artifact references in the research-run API response. Render an AI review panel in the frontend Research Run surface while keeping full report content in the artifact files.
+
+### Actions Taken
+Added `ResearchAiReviewSummary` to the backend response model, returned AI review metadata from `ResearchRunService`, updated frontend API types, and rendered an `AI agent review` panel with status/model, summary, and paths for `ai_review.json`, `agent-decisions.jsonl`, and `final_report.md`.
+
+### Validation
+Backend `pytest -v` passed with 16 tests. Frontend `npm run test` passed with 4 tests. Frontend `npm run build` passed. `git diff --check` passed.
+
+### Result
+Research runs now show the AI-agent review outcome directly in the browser while preserving artifact files as the canonical trace.

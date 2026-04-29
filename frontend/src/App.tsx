@@ -414,6 +414,18 @@ function ResearchRunView({ researchRun }: { researchRun: ResearchRunResponse }) 
       <div className="backtest-detail">
         <h3>{researchRun.ts_code} {researchRun.stock_name ?? ""}</h3>
         <p className="muted-text">{researchRun.artifact_dir}</p>
+        <section className="ai-review-panel" aria-label="AI agent review">
+          <div>
+            <h4>AI agent review</h4>
+            <p className="muted-text">{aiReviewStatusText(researchRun)}</p>
+          </div>
+          <p className="reason-callout">{researchRun.ai_review.summary}</p>
+          <div className="artifact-grid">
+            <ContextItem label="Review" value={researchRun.ai_review.artifact_refs.review} />
+            <ContextItem label="Decisions" value={researchRun.ai_review.artifact_refs.decisions} />
+            <ContextItem label="Report" value={researchRun.ai_review.artifact_refs.report} />
+          </div>
+        </section>
         <table>
           <thead>
             <tr>
@@ -494,6 +506,12 @@ function ContextItem({ label, value }: { label: string; value: string }) {
       <strong>{value}</strong>
     </div>
   )
+}
+
+function aiReviewStatusText(researchRun: ResearchRunResponse) {
+  return researchRun.ai_review.model
+    ? `${researchRun.ai_review.status} / ${researchRun.ai_review.model}`
+    : researchRun.ai_review.status
 }
 
 function Metric({ label, value, tone }: { label: string; value: string; tone?: "good" | "bad" }) {

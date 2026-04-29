@@ -11,6 +11,7 @@ from app.domain.models import (
     BacktestRequest,
     BacktestResponse,
     ResearchAggregateScore,
+    ResearchAiReviewSummary,
     ResearchObservationScore,
     ResearchRunRequest,
     ResearchRunResponse,
@@ -71,6 +72,7 @@ class ResearchRunService:
             window_days=request.window_days,
             observation_offsets=OBSERVATION_OFFSETS,
             artifact_dir=str(run_dir),
+            ai_review=_build_ai_review_summary(run_dir, ai_review),
             aggregate_scores=aggregate_scores,
             samples=samples,
         )
@@ -448,6 +450,24 @@ def _build_ai_payload(
 
 def _redact_sensitive_review(review: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in review.items() if key.lower() not in {"api_key", "token", "secret"}}
+
+
+def _build_ai_review_summary(run_dir: Path, ai_review: dict[str, Any]) -> ResearchAiReviewSummary:
+    aggregate_dir = run_dir / "aggregate"
+    status = str(ai_review.get("status", "failed"))
+    if status not in {"completed", "skipped", "failed"}:
+        status = "failed"
+    model = ai_review.get("model")
+    return ResearchAiReviewSummary(
+        status=status,
+        model=model if isinstance(model, str) else None,
+        summary=str(ai_review.get("review_summary") or "AI research review did not provide a summary."),
+        artifact_refs={
+            "review": str(aggregate_dir / "ai_review.json"),
+            "decisions": str(aggregate_dir / "agent-decisions.jsonl"),
+            "report": str(aggregate_dir / "final_report.md"),
+        },
+    )
 
 
 def _write_manifest(

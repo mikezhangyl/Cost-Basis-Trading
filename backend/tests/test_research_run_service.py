@@ -114,6 +114,14 @@ def test_research_run_service_scores_strategies_and_writes_artifacts(tmp_path: P
     }
     assert all(sample.status == "completed" for sample in result.samples)
     assert all(len(sample.strategies) == 2 for sample in result.samples)
+    assert result.ai_review.status == "completed"
+    assert result.ai_review.model == "fake-agent"
+    assert result.ai_review.summary == "样本数量较少，当前只能作为流程验证。"
+    assert result.ai_review.artifact_refs == {
+        "review": str(tmp_path / result.run_id / "aggregate" / "ai_review.json"),
+        "decisions": str(tmp_path / result.run_id / "aggregate" / "agent-decisions.jsonl"),
+        "report": str(tmp_path / result.run_id / "aggregate" / "final_report.md"),
+    }
 
     run_dir = tmp_path / result.run_id
     assert run_dir.exists()
@@ -159,3 +167,5 @@ def test_research_run_service_records_skipped_ai_agent_when_unconfigured(tmp_pat
     review_payload = json.loads((tmp_path / result.run_id / "aggregate" / "ai_review.json").read_text())
     assert review_payload["status"] == "skipped"
     assert review_payload["reason"] == "research_agent_client_not_configured"
+    assert result.ai_review.status == "skipped"
+    assert result.ai_review.summary == "AI research agent was skipped because no agent client was configured."

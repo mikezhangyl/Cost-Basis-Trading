@@ -58,7 +58,7 @@ This first research-run surface is the implementation seed for the artifact-driv
 9. Backtest score artifacts and manifests are written under `samples/<sample_id>/backtest/`.
 10. If `DEEPSEEK_API_KEY` is configured, the optional AI research agent reviews the deterministic run summary through the OpenAI-compatible DeepSeek API.
 11. AI review output is written under `aggregate/ai_review.json`, `aggregate/agent-decisions.jsonl`, and `aggregate/final_report.md`.
-12. The API returns aggregate strategy scores and sample artifact paths for the frontend.
+12. The API returns aggregate strategy scores, AI review status/summary, AI artifact references, and sample artifact paths for the frontend.
 
 ## API Contract Direction
 

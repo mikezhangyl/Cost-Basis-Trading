@@ -423,16 +423,22 @@ th {
   background: #f6f8f4;
 }
 
-.context-panel h4 {
+.context-panel h4,
+.ai-review-panel h4 {
   margin: 0 0 6px;
   color: #25342c;
   font-size: 0.9rem;
 }
 
-.context-grid {
+.context-grid,
+.artifact-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(110px, 1fr));
   gap: 10px;
+}
+
+.artifact-grid {
+  grid-template-columns: repeat(3, minmax(160px, 1fr));
 }
 
 .context-item {
@@ -452,7 +458,16 @@ th {
 
 .context-item strong {
   color: #17201b;
+  overflow-wrap: anywhere;
   font-size: 1rem;
+}
+
+.ai-review-panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(36, 54, 44, 0.14);
+  background: #fbfcf8;
 }
 
 .trade-list,
@@ -499,7 +514,8 @@ th {
   .backtest-form,
   .research-form,
   .metric-grid,
-  .context-grid {
+  .context-grid,
+  .artifact-grid {
     grid-template-columns: 1fr;
   }
 }

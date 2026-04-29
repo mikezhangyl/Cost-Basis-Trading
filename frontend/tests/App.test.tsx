@@ -116,6 +116,16 @@ const researchRunResponse = {
     observation_offsets: [1, 3, 5],
     sample_count: 2,
     artifact_dir: "docs/research-runs/run-test-1",
+    ai_review: {
+      status: "completed",
+      model: "deepseek-v4-pro",
+      summary: "未发现未来函数风险，但样本数量较少。",
+      artifact_refs: {
+        review: "docs/research-runs/run-test-1/aggregate/ai_review.json",
+        decisions: "docs/research-runs/run-test-1/aggregate/agent-decisions.jsonl",
+        report: "docs/research-runs/run-test-1/aggregate/final_report.md"
+      }
+    },
     aggregate_scores: [
       {
         strategy_id: "composite_baseline",
@@ -285,5 +295,9 @@ describe("App", () => {
     expect(screen.getByText("market_context_followthrough")).toBeInTheDocument()
     expect(screen.getByText("+1.80%")).toBeInTheDocument()
     expect(screen.getByText("docs/research-runs/run-test-1")).toBeInTheDocument()
+    expect(screen.getByText("AI agent review")).toBeInTheDocument()
+    expect(screen.getByText("completed / deepseek-v4-pro")).toBeInTheDocument()
+    expect(screen.getByText("未发现未来函数风险，但样本数量较少。")).toBeInTheDocument()
+    expect(screen.getByText("docs/research-runs/run-test-1/aggregate/final_report.md")).toBeInTheDocument()
   })
 })
