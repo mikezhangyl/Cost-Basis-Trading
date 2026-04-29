@@ -48,7 +48,7 @@ Window semantics:
 - `analysis_days`: the first `N` resolved trading days from the selected start date.
 - `signal_date`: the `N`th trading day.
 - Feature deltas are calculated from the first available chip date in the analysis window to `signal_date`.
-- Future observation windows stay outside this feature layer and remain part of backtest scoring.
+- Future observation windows stay outside this feature layer and remain part of backtest scoring. The target observation offsets for the next research phase are `N+1`, `N+3`, and `N+5`.
 
 ## Output Shape
 
@@ -419,7 +419,7 @@ Feature extraction itself is not scored. Candidate strategies built on these fea
 
 Minimum scoring per strategy:
 
-| Signal | N+3/N+7/N+15 scoring idea |
+| Signal | N+1/N+3/N+5 scoring idea |
 | --- | --- |
 | `BUY` | Match if forward return is positive; stronger match if return beats a configurable threshold. |
 | `SELL` | Match if forward return is negative; stronger match if drawdown or negative return appears. |

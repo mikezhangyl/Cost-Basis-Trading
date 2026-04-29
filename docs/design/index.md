@@ -25,3 +25,5 @@ Detailed chart design will be specified after the first signal table is working.
 
 - [chip-change-feature-set.md](./chip-change-feature-set.md)
   defines the proposed source-traceable feature layer for daily chip-change analysis before candidate strategy implementation.
+- [chip-factor-autoresearch-agent.md](./chip-factor-autoresearch-agent.md)
+  defines the auditable AI-agent research loop for scoped stock/date experiments, API-call logs, agent decisions, and `N+1`/`N+3`/`N+5` validation.

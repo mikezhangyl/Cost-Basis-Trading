@@ -221,3 +221,23 @@ Documentation-only change after the commit. No code or tests were run.
 
 ### Result
 The feature design now exists as a pre-implementation artifact. The next code step should be fixture-based tests for daily chip snapshots and window deltas.
+
+## Step 12
+
+### User Instruction
+几点建议， 1. 回测我们改成+1， +3， +5。 2. 具体执行的时候，我们每一次 api 调用，每一次 agent 的分析过程，判断，和最后的结论必须落盘，目的是要做到可追溯 3. 股票范围怎么定？ 我希望一开始是在指定范围内的股票开始，时间范围也是， 指定其实日期，然后自动采集这个日期之后的 n 天作为样本分析， 然后判断第 n+1，n+3，n+5 的情况没如果能给出 confidence 最好了
+
+### Understanding
+The chip-factor autoresearch workflow should use shorter forward validation windows, scoped stock/date inputs, and mandatory audit logging. Every API call, feature snapshot, agent analysis, judgment, and final conclusion must be persisted so future results are traceable.
+
+### Plan
+Add an agent design document that adapts the autonomous research-loop pattern to chip-factor research. Update the feature design to reference `N+1`, `N+3`, and `N+5` as the target observation windows.
+
+### Actions Taken
+Added `docs/design/chip-factor-autoresearch-agent.md`. It defines research scope inputs, manual stock universe behavior, date range sampling, audit files (`api-calls.jsonl`, `feature-snapshots.jsonl`, `agent-decisions.jsonl`, `backtest-results.tsv`, `failure-cases.jsonl`, `final-report.md`), agent roles, confidence semantics, and promotion rules. Updated `docs/design/chip-change-feature-set.md` and `docs/design/index.md`.
+
+### Validation
+Documentation-only change. No code or tests were run.
+
+### Result
+The agent research-loop design now captures the user's desired `N+1/N+3/N+5` validation, scoped experiment setup, and full traceability requirements.
