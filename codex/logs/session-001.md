@@ -261,3 +261,23 @@ Backend `pytest -v` passed with 13 tests. Frontend `npm run test` passed with 3 
 
 ### Result
 The app now has a complete first E2E slice for `000001`: scan/backtest defaults, `N+1/N+3/N+5` validation, and visible volume/price/K-line context.
+
+## Step 14
+
+### User Instruction
+很好， 让我们把这个 agent 的模式设计编程正式的设计文档
+
+### Understanding
+The multi-agent workflow discussion should become a durable design document before implementation. The document should explain the pattern name, orchestrator role, artifact-based communication, readiness gating, Strategy Agent to Backtest Evaluator handoff, and traceability guarantees.
+
+### Plan
+Add a formal design document under `docs/design/`, link it from the design index, and update session memory.
+
+### Actions Taken
+Added `docs/design/multi-agent-research-workflow.md`. It defines the Supervisor-Orchestrated, Artifact-Driven Multi-Agent Research Workflow, including role boundaries, artifact store layout, manifest contract, readiness rules, state machine, access-control table, implementation contract, and open questions. Linked it from `docs/design/index.md`.
+
+### Validation
+Documentation-only change. No code or tests were run.
+
+### Result
+The agent collaboration model is now persisted as a formal design artifact for future implementation and interview explanation.
