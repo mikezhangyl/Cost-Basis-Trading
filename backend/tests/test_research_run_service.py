@@ -65,8 +65,36 @@ class FakeResearchRunClient:
         ]
 
 
+class FakeResearchAgentClient:
+    def analyze_research_run(self, payload: dict) -> dict:
+        assert payload["ts_code"] == "000001.SZ"
+        assert payload["sample_count"] == 2
+        return {
+            "status": "completed",
+            "model": "fake-agent",
+            "review_summary": "样本数量较少，当前只能作为流程验证。",
+            "final_report": "本次研究流程完成，两个候选策略均已评分。",
+            "agent_decisions": [
+                {
+                    "agent": "critic-agent",
+                    "decision_type": "run_review",
+                    "reasoning_summary": "未发现未来函数；样本覆盖仍不足。",
+                },
+                {
+                    "agent": "report-agent",
+                    "decision_type": "run_report",
+                    "reasoning_summary": "生成最终研究摘要。",
+                },
+            ],
+        }
+
+
 def test_research_run_service_scores_strategies_and_writes_artifacts(tmp_path: Path) -> None:
-    service = ResearchRunService(FakeResearchRunClient(), artifact_root=tmp_path)
+    service = ResearchRunService(
+        FakeResearchRunClient(),
+        artifact_root=tmp_path,
+        research_agent_client=FakeResearchAgentClient(),
+    )
 
     result = service.run(
         ResearchRunRequest(
@@ -92,6 +120,8 @@ def test_research_run_service_scores_strategies_and_writes_artifacts(tmp_path: P
     assert (run_dir / "run-config.json").exists()
     assert (run_dir / "run-manifest.json").exists()
     assert (run_dir / "api-calls.jsonl").exists()
+    assert (run_dir / "aggregate" / "agent-decisions.jsonl").exists()
+    assert (run_dir / "aggregate" / "final_report.md").exists()
 
     first_sample_dir = run_dir / "samples" / result.samples[0].sample_id
     assert (first_sample_dir / "features" / "feature_set.json").exists()
@@ -106,3 +136,26 @@ def test_research_run_service_scores_strategies_and_writes_artifacts(tmp_path: P
     score_payload = json.loads((first_sample_dir / "backtest" / "backtest_score.json").read_text())
     assert len(score_payload["strategy_scores"]) == 2
     assert score_payload["strategy_scores"][0]["observation_scores"][0]["offset_days"] == 1
+
+    report_text = (run_dir / "aggregate" / "final_report.md").read_text()
+    assert "本次研究流程完成" in report_text
+
+    review_payload = json.loads((run_dir / "aggregate" / "ai_review.json").read_text())
+    assert review_payload["status"] == "completed"
+    assert review_payload["model"] == "fake-agent"
+
+
+def test_research_run_service_records_skipped_ai_agent_when_unconfigured(tmp_path: Path) -> None:
+    service = ResearchRunService(FakeResearchRunClient(), artifact_root=tmp_path)
+
+    result = service.run(
+        ResearchRunRequest(
+            stock_code="000001",
+            start_dates=["20260401"],
+            window_days=5,
+        )
+    )
+
+    review_payload = json.loads((tmp_path / result.run_id / "aggregate" / "ai_review.json").read_text())
+    assert review_payload["status"] == "skipped"
+    assert review_payload["reason"] == "research_agent_client_not_configured"

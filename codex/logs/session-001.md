@@ -301,3 +301,23 @@ Backend `pytest -v` passed with 15 tests. Frontend `npm run test` passed with 4 
 
 ### Result
 The first single-stock research workflow now runs end to end locally with multiple sample start dates, multiple candidate strategies, aggregate scoring, and per-run artifact trace logs.
+
+## Step 16
+
+### User Instruction
+我给你 api 接入代码 sample：... DeepSeek OpenAI-compatible SDK sample ... 然后我把 key 写在 env.local了
+
+### Understanding
+Wire the provided OpenAI-compatible DeepSeek API into the research workflow without exposing the API key. The deterministic research run should remain the source of truth, while AI agent output should be optional and persisted as review/report artifacts.
+
+### Plan
+Add a DeepSeek research-agent client that reads `DEEPSEEK_API_KEY` from existing environment loading, inject it into `/api/research-runs`, write AI review artifacts under `aggregate/`, and keep skipped/failed AI calls non-fatal.
+
+### Actions Taken
+Added `DeepSeekResearchAgentClient` using the OpenAI SDK with base URL `https://api.deepseek.com`, model `deepseek-v4-pro`, `reasoning_effort="high"`, and `extra_body={"thinking": {"type": "enabled"}}`. Added optional `ResearchAgentClient` injection to `ResearchRunService`. The service now writes `aggregate/ai_review.json`, `aggregate/agent-decisions.jsonl`, and `aggregate/final_report.md` for completed, skipped, or failed AI-agent execution. Added `openai>=1.0` to backend dependencies and ignored generated `docs/research-runs/run-*/` directories.
+
+### Validation
+Backend `pytest -v` passed with 16 tests. Frontend `npm run test` passed with 4 tests. Frontend `npm run build` passed. `git diff --check` passed.
+
+### Result
+The AI-agent API integration point is in place. Research runs can now perform deterministic scoring first, then optionally call DeepSeek for critic/report artifacts when `DEEPSEEK_API_KEY` is configured.

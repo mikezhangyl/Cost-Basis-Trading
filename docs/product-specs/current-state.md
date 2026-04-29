@@ -52,6 +52,7 @@ Implemented first research-run behavior:
 - initial candidate strategies are `composite_baseline` and `market_context_followthrough`
 - scoring uses `N+1`, `N+3`, and `N+5` directional returns
 - backend writes trace artifacts under `docs/research-runs/<run_id>/`
+- if `DEEPSEEK_API_KEY` is configured, the optional AI research agent reviews the run through the OpenAI-compatible DeepSeek API and writes aggregate review artifacts
 - frontend displays run id, artifact directory, aggregate strategy scores, and per-sample artifact paths
 
 ## Product Boundaries

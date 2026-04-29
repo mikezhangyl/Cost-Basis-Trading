@@ -20,13 +20,20 @@ from app.domain.models import (
 )
 from app.services.backtest_service import OBSERVATION_OFFSETS, BacktestMarketDataClient, BacktestService
 from app.services.code_normalizer import normalize_ts_code
+from app.services.research_agent_client import ResearchAgentClient
 from app.strategies.candidates import build_research_strategy_signals
 
 
 class ResearchRunService:
-    def __init__(self, market_data_client: BacktestMarketDataClient, artifact_root: Path | None = None) -> None:
+    def __init__(
+        self,
+        market_data_client: BacktestMarketDataClient,
+        artifact_root: Path | None = None,
+        research_agent_client: ResearchAgentClient | None = None,
+    ) -> None:
         self.market_data_client = market_data_client
         self.artifact_root = artifact_root or _default_artifact_root()
+        self.research_agent_client = research_agent_client
 
     def run(self, request: ResearchRunRequest) -> ResearchRunResponse:
         run_id = _build_run_id()
@@ -55,6 +62,7 @@ class ResearchRunService:
         ]
         aggregate_scores = _aggregate_scores(samples)
         stock_name = _stock_name_from_artifacts(run_dir, samples)
+        ai_review = self._run_ai_research_agents(run_dir, run_id, ts_code, request, samples, aggregate_scores)
 
         response = ResearchRunResponse.create(
             run_id=run_id,
@@ -75,9 +83,60 @@ class ResearchRunService:
                 "sample_count": len(samples),
                 "output_refs": ["run-config.json", "api-calls.jsonl", "run-manifest.json"],
                 "aggregate_scores": [score.model_dump(mode="json") for score in aggregate_scores],
+                "ai_review_status": ai_review["status"],
             },
         )
         return response
+
+    def _run_ai_research_agents(
+        self,
+        run_dir: Path,
+        run_id: str,
+        ts_code: str,
+        request: ResearchRunRequest,
+        samples: list[ResearchSampleResult],
+        aggregate_scores: list[ResearchAggregateScore],
+    ) -> dict[str, Any]:
+        payload = _build_ai_payload(run_id, ts_code, request, samples, aggregate_scores)
+        aggregate_dir = run_dir / "aggregate"
+        if self.research_agent_client is None:
+            ai_review = {
+                "status": "skipped",
+                "reason": "research_agent_client_not_configured",
+                "review_summary": "AI research agent was skipped because no agent client was configured.",
+                "final_report": "AI research agent skipped. Deterministic scores and artifacts were still generated.",
+                "agent_decisions": [],
+            }
+        else:
+            try:
+                ai_review = self.research_agent_client.analyze_research_run(payload)
+            except Exception as error:
+                ai_review = {
+                    "status": "failed",
+                    "reason": "research_agent_client_error",
+                    "review_summary": "AI research agent failed; deterministic scores remain available.",
+                    "final_report": "AI research agent failed. See ai_review.json for error metadata.",
+                    "agent_decisions": [],
+                    "error": str(error),
+                }
+
+        _write_json(aggregate_dir / "ai_review.json", _redact_sensitive_review(ai_review))
+        _write_jsonl(
+            aggregate_dir / "agent-decisions.jsonl",
+            [
+                {
+                    "timestamp": _now_iso(),
+                    "run_id": run_id,
+                    "agent": decision.get("agent", "research-agent"),
+                    "decision_type": decision.get("decision_type", "run_review"),
+                    "reasoning_summary": decision.get("reasoning_summary", ""),
+                    "status": ai_review.get("status", "unknown"),
+                }
+                for decision in ai_review.get("agent_decisions", [])
+            ],
+        )
+        _write_text(aggregate_dir / "final_report.md", str(ai_review.get("final_report", "")))
+        return ai_review
 
     def _run_sample(
         self,
@@ -343,6 +402,54 @@ def _aggregate_scores(samples: list[ResearchSampleResult]) -> list[ResearchAggre
     ]
 
 
+def _build_ai_payload(
+    run_id: str,
+    ts_code: str,
+    request: ResearchRunRequest,
+    samples: list[ResearchSampleResult],
+    aggregate_scores: list[ResearchAggregateScore],
+) -> dict[str, Any]:
+    return {
+        "run_id": run_id,
+        "ts_code": ts_code,
+        "window_days": request.window_days,
+        "observation_offsets": OBSERVATION_OFFSETS,
+        "sample_count": len(samples),
+        "candidate_strategy_ids": request.candidate_strategy_ids,
+        "aggregate_scores": [score.model_dump(mode="json") for score in aggregate_scores],
+        "samples": [
+            {
+                "sample_id": sample.sample_id,
+                "start_date": sample.start_date,
+                "signal_date": sample.signal_date,
+                "status": sample.status,
+                "strategies": [
+                    {
+                        "strategy_id": strategy.strategy_id,
+                        "action": strategy.signal.action,
+                        "confidence": strategy.signal.confidence,
+                        "reason": strategy.signal.reasons[0] if strategy.signal.reasons else "",
+                        "average_directional_score": strategy.average_directional_score,
+                        "match_count": strategy.match_count,
+                        "mismatch_count": strategy.mismatch_count,
+                        "neutral_count": strategy.neutral_count,
+                        "observation_scores": [
+                            observation.model_dump(mode="json")
+                            for observation in strategy.observation_scores
+                        ],
+                    }
+                    for strategy in sample.strategies
+                ],
+            }
+            for sample in samples
+        ],
+    }
+
+
+def _redact_sensitive_review(review: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in review.items() if key.lower() not in {"api_key", "token", "secret"}}
+
+
 def _write_manifest(
     path: Path,
     *,
@@ -381,6 +488,11 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
 def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("".join(f"{json.dumps(row, ensure_ascii=False)}\n" for row in rows), encoding="utf-8")
+
+
+def _write_text(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
 
 
 def _append_jsonl(path: Path, row: dict[str, Any]) -> None:
