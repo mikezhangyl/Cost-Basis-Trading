@@ -5,7 +5,13 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
-from scripts.ecc_quality_workflow import find_latest_research_run, review_latest_research, run_quality_gate
+from scripts.ecc_quality_workflow import (
+    find_latest_factor_run,
+    find_latest_research_run,
+    review_latest_factor,
+    review_latest_research,
+    run_quality_gate,
+)
 
 
 def test_review_latest_research_runs_artifact_reviewer_for_newest_run(tmp_path: Path) -> None:
@@ -40,6 +46,42 @@ def test_find_latest_research_run_fails_when_no_runs_exist(tmp_path: Path) -> No
         assert "No research runs found" in str(error)
     else:
         raise AssertionError("Expected missing research runs to fail.")
+
+
+def test_review_latest_factor_runs_artifact_reviewer_for_newest_run(tmp_path: Path) -> None:
+    factor_root = tmp_path / "factor-runs"
+    _write_factor_run(factor_root, "factor-run-20260501-000001-aaaaaaaa")
+    _write_factor_run(factor_root, "factor-run-20260501-000002-bbbbbbbb")
+
+    result = review_latest_factor(factor_run_root=factor_root)
+
+    assert result.workflow == "review-latest-factor"
+    assert result.run_id == "factor-run-20260501-000002-bbbbbbbb"
+    assert result.review.status == "needs_fix"
+    review_dir = Path(result.review.artifact_dir)
+    assert (review_dir.parent / "latest.json").exists()
+    assert (review_dir / "review-config.json").exists()
+    assert (review_dir / "source-artifacts.json").exists()
+    assert result.quality_subagent_prompt == str(review_dir / "quality-subagent-review-prompt.md")
+
+
+def test_find_latest_factor_run_fails_when_no_runs_exist(tmp_path: Path) -> None:
+    try:
+        find_latest_factor_run(tmp_path / "factor-runs")
+    except FileNotFoundError as error:
+        assert "No factor runs found" in str(error)
+    else:
+        raise AssertionError("Expected missing factor runs to fail.")
+
+
+def test_find_latest_factor_run_uses_manifest_completed_at_before_name(tmp_path: Path) -> None:
+    factor_root = tmp_path / "factor-runs"
+    _write_factor_run(factor_root, "factor-run-z-old", completed_at="2026-01-01T00:00:00+00:00")
+    _write_factor_run(factor_root, "factor-run-a-new", completed_at="2026-01-02T00:00:00+00:00")
+
+    latest = find_latest_factor_run(factor_root)
+
+    assert latest.name == "factor-run-a-new"
 
 
 def test_quality_workflow_cli_reviews_latest_research_run(tmp_path: Path) -> None:
@@ -103,6 +145,30 @@ def test_quality_workflow_cli_reviews_latest_research_run(tmp_path: Path) -> Non
     assert (review_dir / "review-state.json").exists()
     assert (review_dir / "workflow-events.jsonl").exists()
     assert (review_dir / "external-review-calls.jsonl").exists()
+
+
+def test_quality_workflow_cli_reviews_latest_factor_run(tmp_path: Path) -> None:
+    factor_root = tmp_path / "factor-runs"
+    _write_factor_run(factor_root, "factor-run-20260501-000001-aaaaaaaa")
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/ecc_quality_workflow.py",
+            "review-latest-factor",
+            "--factor-run-root",
+            str(factor_root),
+        ],
+        check=True,
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(completed.stdout)
+    assert payload["workflow"] == "review-latest-factor"
+    assert payload["run_id"] == "factor-run-20260501-000001-aaaaaaaa"
+    assert payload["quality_subagent_prompt"].endswith("quality-subagent-review-prompt.md")
 
 
 def test_quality_gate_runs_default_checks_in_subagent_order(tmp_path: Path) -> None:
@@ -200,3 +266,42 @@ def _write_research_run(research_root: Path, run_id: str) -> None:
     )
     (features_dir / "feature_set.json").write_text(json.dumps({"latest_close": 10.0}), encoding="utf-8")
     (signals_dir / "signal_composite_baseline.json").write_text(json.dumps({"action": "HOLD"}), encoding="utf-8")
+
+
+def _write_factor_run(factor_root: Path, run_id: str, completed_at: str = "2026-05-01T00:00:00+00:00") -> None:
+    run_dir = factor_root / run_id
+    stock_dir = run_dir / "stocks" / "000001.SZ"
+    stock_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "factor-run-config.json").write_text(
+        json.dumps(
+            {
+                "factor_run_id": run_id,
+                "stock_codes": ["000001.SZ"],
+                "factor_start_date": "20260105",
+                "factor_end_date": "20260105",
+                "dry_run": False,
+                "cache_root": str(factor_root / "cache"),
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "factor-run-manifest.json").write_text(
+        json.dumps(
+            {
+                "factor_run_id": run_id,
+                "status": "failed",
+                "completed_at": completed_at,
+                "factor_date_count": 0,
+                "warmup_date_count": 0,
+                "stock_count": 0,
+                "stock_outputs": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "api-calls.jsonl").write_text(
+        json.dumps({"endpoint": "trade_cal", "status": "failed", "params": {}, "error": "network"}) + "\n",
+        encoding="utf-8",
+    )
+    (run_dir / "api-retry-events.jsonl").write_text("", encoding="utf-8")
+    (run_dir / "worker-events.jsonl").write_text(json.dumps({"event": "factor_run_started"}) + "\n", encoding="utf-8")
