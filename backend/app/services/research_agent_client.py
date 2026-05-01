@@ -42,16 +42,6 @@ class DeepSeekResearchAgentClient:
             }
 
         client = OpenAI(api_key=self.api_key, base_url=self.base_url, timeout=60.0)
-        langsmith_key = _langsmith_api_key()
-        tracing_setting = os.getenv("LANGSMITH_TRACING")
-        tracing_enabled = bool(langsmith_key) and (tracing_setting is None or tracing_setting.lower() == "true")
-        if tracing_enabled:
-            os.environ.setdefault("LANGSMITH_API_KEY", str(langsmith_key))
-            os.environ.setdefault("LANGSMITH_TRACING", "true")
-            os.environ.setdefault("LANGSMITH_PROJECT", "cost-basis-trading-dev")
-            from langsmith.wrappers import wrap_openai
-
-            client = wrap_openai(client)
         response = client.chat.completions.create(
             model=self.model,
             messages=[
@@ -108,7 +98,3 @@ def _first_non_empty_line(content: str) -> str:
         if stripped:
             return stripped
     return "AI research review completed."
-
-
-def _langsmith_api_key() -> str | None:
-    return os.getenv("LANGSMITH_API_KEY")

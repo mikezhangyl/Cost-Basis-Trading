@@ -11,9 +11,6 @@ dependencies = [
   "openai>=1.0",
   "tushare>=1.4",
   "pandas>=2.2",
-  "langgraph>=1.0",
-  "langgraph-checkpoint-sqlite>=3.0",
-  "langsmith>=0.4",
 ]
 
 [project.optional-dependencies]
