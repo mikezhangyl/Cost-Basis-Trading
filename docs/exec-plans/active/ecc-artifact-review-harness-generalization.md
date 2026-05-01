@@ -280,6 +280,7 @@ ECC Quality Sub-Agent owns:
 Phase 1:
 
 - keep `scripts/ecc_artifact_reviewer.py` working for Cost-Basis-Trading research runs,
+- add `scripts/ecc_quality_workflow.py review-latest-research` as the project-local sub-agent entrypoint,
 - add generic manifest/profile templates under `.ecc/artifact-review/`,
 - update the skill with new-project initialization guidance.
 

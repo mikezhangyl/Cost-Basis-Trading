@@ -30,6 +30,14 @@ python scripts/ecc_artifact_reviewer.py --run-id <run_id> --external-reviewer de
 
 `--no-llm` remains as a deprecated alias for the default no-external-reviewer path.
 
+Review the latest research run:
+
+```bash
+python scripts/ecc_quality_workflow.py review-latest-research
+```
+
+This command finds the newest `docs/research-runs/run-*`, runs ECC Artifact Reviewer for it, and prints a JSON payload containing the generated `quality-subagent-review-prompt.md` path plus the review artifact refs. Parent Codex should use it as a sub-agent task entrypoint, not as a product workflow.
+
 ## Output
 
 The reviewer writes:
@@ -99,8 +107,8 @@ Scope:
 Tasks:
 1. Run the specified test commands.
 2. If a research run is requested, execute it or inspect the provided run id.
-3. Run ECC Artifact Reviewer for the provided artifact.
-4. Read quality-subagent-review-prompt.md and source artifacts.
+3. Run `python scripts/ecc_quality_workflow.py review-latest-research` when the parent asks for latest-run review, or run ECC Artifact Reviewer for a provided run id.
+4. Read the generated quality-subagent-review-prompt.md and source artifacts.
 5. Update findings.json, artifact-review-report.md, fix-plan-draft.md, and review-state.json.
 6. Return a concise summary with status, findings, skipped checks, and artifact paths.
 
@@ -116,7 +124,7 @@ Parent Codex
   -> spawn ECC Quality Sub-Agent
   -> sub-agent runs unit/integration/E2E tests as requested
   -> sub-agent runs research workflow if requested
-  -> sub-agent runs ECC Artifact Reviewer
+  -> sub-agent runs `python scripts/ecc_quality_workflow.py review-latest-research` or direct ECC Artifact Reviewer
   -> sub-agent writes quality artifacts
   -> parent summarizes and asks for approval
 ```

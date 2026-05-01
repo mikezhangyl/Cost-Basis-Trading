@@ -72,6 +72,14 @@ Prepare a review packet. Run this inside the ECC Quality Sub-Agent when sub-agen
 python scripts/ecc_artifact_reviewer.py --run-id <run_id>
 ```
 
+Prepare a review packet for the newest research run:
+
+```bash
+python scripts/ecc_quality_workflow.py review-latest-research
+```
+
+Parent Codex should prefer this command when the user asks to review the latest run. The command only finds the latest run and prepares the artifact review packet; the ECC Quality Sub-Agent still performs the semantic review and updates review artifacts.
+
 Ask an external DeepSeek reviewer for a second opinion:
 
 ```bash
@@ -86,6 +94,7 @@ The default path does not call an external LLM. `--no-llm` remains as a deprecat
 - No product API exists for ECC Artifact Reviewer.
 - Backend dependencies do not include LangGraph or LangSmith.
 - Verification execution is delegated to an ECC Quality Sub-Agent when the runtime supports sub-agents.
+- `scripts/ecc_quality_workflow.py review-latest-research` can prepare the latest run review packet.
 - Reviewer artifacts are stored under `docs/research-runs/<run_id>/ecc-artifact-reviews/`.
 - `latest.json` points to the latest review for the run.
 - Review execution logs local events and optional external-review call summaries.
