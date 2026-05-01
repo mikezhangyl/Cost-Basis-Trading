@@ -31,7 +31,19 @@ REQUIRED_FACTOR_RUN_FILES = [
     "api-retry-events.jsonl",
     "worker-events.jsonl",
 ]
+REQUIRED_FACTOR_BATCH_FILES = [
+    "factor-batch-summary.json",
+    "aggregate-factor-report.md",
+]
 EXPECTED_OBSERVATION_OFFSETS = [1, 3, 5, 15, 30, 60, 90, 180]
+EXPECTED_BATCH_DIRECTIONS = {
+    "HIGH_FACTOR_OUTPERFORMS_ALL",
+    "HIGH_FACTOR_OUTPERFORMS_MAJORITY",
+    "LOW_FACTOR_OUTPERFORMS_ALL",
+    "LOW_FACTOR_OUTPERFORMS_MAJORITY",
+    "MIXED",
+    "INSUFFICIENT_DATA",
+}
 
 
 @dataclass(frozen=True)
@@ -109,11 +121,13 @@ class EccArtifactReviewer:
         self,
         research_run_root: Path | None = None,
         factor_run_root: Path | None = None,
+        factor_batch_root: Path | None = None,
         plan_doc_paths: list[Path] | None = None,
         review_client: ArtifactReviewClient | None = None,
     ) -> None:
         self.research_run_root = research_run_root or default_research_run_root()
         self.factor_run_root = factor_run_root or default_factor_run_root()
+        self.factor_batch_root = factor_batch_root or default_factor_batch_root()
         self.plan_doc_paths = plan_doc_paths or default_plan_doc_paths()
         self.review_client = review_client
 
@@ -205,6 +219,120 @@ class EccArtifactReviewer:
             {
                 "review_id": review_id,
                 "run_id": safe_run_id,
+                "status": status,
+                "primary_reviewer": "ecc_quality_subagent",
+                "quality_subagent_semantic_review": "pending",
+                "external_reviewer": external_result.get("provider", "none"),
+                "findings_count": result.findings_count,
+                "approval_required": result.approval_required,
+            },
+        )
+        _write_json(review_dir.parent / "latest.json", asdict(result))
+        _append_event(events_path, review_id, "write_artifact_review", "completed", {"status": status})
+        return result
+
+    def review_factor_batch(self, batch_id: str) -> ArtifactReviewResult:
+        safe_batch_id = _validate_simple_name(batch_id)
+        review_id = _build_review_id()
+        batch_dir = self.factor_batch_root / safe_batch_id
+        if not batch_dir.exists():
+            raise FileNotFoundError(str(batch_dir))
+        review_dir = _build_review_dir(batch_dir, review_id)
+        review_dir.mkdir(parents=True, exist_ok=True)
+        events_path = review_dir / "workflow-events.jsonl"
+
+        _append_event(events_path, review_id, "load_plan_context", "started")
+        plan_snapshot = collect_plan_snapshot(self.plan_doc_paths)
+        _write_json(review_dir / "plan-snapshot.json", plan_snapshot)
+        _append_event(events_path, review_id, "load_plan_context", "completed", {"document_count": len(plan_snapshot["documents"])})
+
+        _append_event(events_path, review_id, "load_factor_batch_artifacts", "started")
+        source_artifacts = collect_factor_batch_source_artifacts(batch_dir)
+        _write_json(review_dir / "source-artifacts.json", source_artifacts)
+        _append_event(
+            events_path,
+            review_id,
+            "load_factor_batch_artifacts",
+            "completed",
+            {"artifact_count": len(source_artifacts["paths"])},
+        )
+
+        _append_event(events_path, review_id, "deterministic_artifact_check", "started")
+        deterministic_findings = _build_factor_batch_deterministic_findings(source_artifacts)
+        _append_event(
+            events_path,
+            review_id,
+            "deterministic_artifact_check",
+            "completed",
+            {"findings_count": len(deterministic_findings)},
+        )
+
+        quality_prompt = _build_quality_subagent_review_prompt(
+            review_id,
+            safe_batch_id,
+            review_dir,
+            deterministic_findings,
+            artifact_label="Factor Batch",
+        )
+        _write_text(review_dir / "quality-subagent-review-prompt.md", quality_prompt)
+
+        _append_event(events_path, review_id, "external_artifact_review", "started")
+        payload = _build_factor_batch_external_review_payload(
+            review_id,
+            safe_batch_id,
+            plan_snapshot,
+            source_artifacts,
+            deterministic_findings,
+        )
+        external_result = self._run_external_review_payload(review_dir, review_id, payload)
+        external_findings = list(external_result.get("findings", []))
+        _append_event(events_path, review_id, "external_artifact_review", "completed", {"findings_count": len(external_findings)})
+
+        findings_payload = _findings_payload(review_id, safe_batch_id, deterministic_findings, external_findings)
+        _write_json(review_dir / "findings.json", findings_payload)
+        _write_text(
+            review_dir / "artifact-review-report.md",
+            _build_report(
+                review_id,
+                safe_batch_id,
+                deterministic_findings,
+                external_result,
+                external_findings=external_findings,
+                artifact_label="Factor Batch",
+            ),
+        )
+        _write_text(review_dir / "fix-plan-draft.md", _build_fix_plan(review_id, safe_batch_id, findings_payload["findings"]))
+
+        status = "needs_fix" if findings_payload["findings"] else "passed"
+        result = ArtifactReviewResult(
+            review_id=review_id,
+            run_id=safe_batch_id,
+            status=status,
+            artifact_dir=str(review_dir),
+            findings_count=len(findings_payload["findings"]),
+            approval_required=status == "needs_fix",
+            artifact_refs=_build_artifact_refs(review_dir),
+        )
+        _write_json(
+            review_dir / "review-config.json",
+            {
+                "review_id": review_id,
+                "run_id": safe_batch_id,
+                "reviewer": "ECC Artifact Reviewer",
+                "primary_reviewer": "ecc_quality_subagent",
+                "external_reviewer": external_result.get("provider", "none"),
+                "storage": "run_local",
+                "artifact_type": "factor_batch",
+                "factor_batch_dir": str(batch_dir),
+                "artifact_dir": str(review_dir),
+                "plan_doc_paths": [str(path) for path in self.plan_doc_paths],
+            },
+        )
+        _write_json(
+            review_dir / "review-state.json",
+            {
+                "review_id": review_id,
+                "run_id": safe_batch_id,
                 "status": status,
                 "primary_reviewer": "ecc_quality_subagent",
                 "quality_subagent_semantic_review": "pending",
@@ -393,6 +521,10 @@ def default_factor_run_root() -> Path:
     return Path(__file__).resolve().parents[1] / "docs" / "factor-runs"
 
 
+def default_factor_batch_root() -> Path:
+    return Path(__file__).resolve().parents[1] / "docs" / "factor-batches"
+
+
 def default_plan_doc_paths() -> list[Path]:
     repo_root = Path(__file__).resolve().parents[1]
     return [
@@ -464,6 +596,27 @@ def collect_factor_source_artifacts(run_dir: Path) -> dict[str, Any]:
         "stock_artifacts": stock_artifacts,
         "cache_artifacts": cache_artifacts,
         "paths": [str(run_dir / file) for file in REQUIRED_FACTOR_RUN_FILES] + stock_paths,
+    }
+
+
+def collect_factor_batch_source_artifacts(batch_dir: Path) -> dict[str, Any]:
+    for required_file in REQUIRED_FACTOR_BATCH_FILES:
+        path = batch_dir / required_file
+        if not path.exists():
+            raise FileNotFoundError(str(path))
+
+    config_path = batch_dir / "factor-batch-config.json"
+    events_path = batch_dir / "batch-events.jsonl"
+    stock_results_path = batch_dir / "stock-results.jsonl"
+    optional_paths = [path for path in (config_path, events_path, stock_results_path) if path.exists()]
+    return {
+        "artifact_type": "factor_batch",
+        "batch_summary": _load_json(batch_dir / "factor-batch-summary.json"),
+        "aggregate_report": (batch_dir / "aggregate-factor-report.md").read_text(encoding="utf-8"),
+        "batch_config": _load_json(config_path) if config_path.exists() else {},
+        "batch_events": _load_jsonl(events_path) if events_path.exists() else [],
+        "stock_results_log": _load_jsonl(stock_results_path) if stock_results_path.exists() else [],
+        "paths": [str(batch_dir / file) for file in REQUIRED_FACTOR_BATCH_FILES] + [str(path) for path in optional_paths],
     }
 
 
@@ -594,7 +747,7 @@ def main() -> int:
     parser.add_argument("--run-id", required=True, help="Run id under docs/research-runs or docs/factor-runs.")
     parser.add_argument(
         "--artifact-type",
-        choices=["research", "factor"],
+        choices=["research", "factor", "factor-batch"],
         default="research",
         help="Artifact type to review. Defaults to research for backward compatibility.",
     )
@@ -611,6 +764,12 @@ def main() -> int:
         help="Directory containing factor run artifacts. Defaults to docs/factor-runs.",
     )
     parser.add_argument(
+        "--factor-batch-root",
+        type=Path,
+        default=None,
+        help="Directory containing factor batch artifacts. Defaults to docs/factor-batches.",
+    )
+    parser.add_argument(
         "--external-reviewer",
         choices=["none", "deepseek"],
         default="none",
@@ -623,9 +782,12 @@ def main() -> int:
     reviewer = EccArtifactReviewer(
         research_run_root=args.research_run_root,
         factor_run_root=args.factor_run_root,
+        factor_batch_root=args.factor_batch_root,
         review_client=client,
     )
-    if args.artifact_type == "factor":
+    if args.artifact_type == "factor-batch":
+        result = reviewer.review_factor_batch(args.run_id)
+    elif args.artifact_type == "factor":
         result = reviewer.review_factor_run(args.run_id)
     else:
         result = reviewer.review_run(args.run_id)
@@ -881,6 +1043,328 @@ def _build_factor_deterministic_findings(artifacts: dict[str, Any]) -> list[dict
     return findings
 
 
+def _build_factor_batch_deterministic_findings(artifacts: dict[str, Any]) -> list[dict[str, Any]]:
+    findings = []
+    summary = artifacts.get("batch_summary", {})
+    stock_results = summary.get("stock_results", [])
+    aggregate_summary = summary.get("aggregate_summary", [])
+    stock_count = int(summary.get("stock_count", 0) or 0)
+    success_count = int(summary.get("success_count", 0) or 0)
+    failed_count = int(summary.get("failed_count", 0) or 0)
+
+    if summary.get("status") != "completed":
+        findings.append(
+            _finding(
+                severity="high",
+                category="artifact_gap",
+                title="Factor batch summary is not completed.",
+                evidence=[f"status={summary.get('status')} success_count={success_count} failed_count={failed_count}"],
+                expected="factor-batch-summary.json should have status=completed before aggregate conclusions are trusted.",
+                suggested_fix="Rerun failed stocks or aggregate a successful retry batch before reviewing cross-stock factor diagnostics.",
+            )
+        )
+
+    if success_count + failed_count != stock_count:
+        findings.append(
+            _finding(
+                severity="high",
+                category="artifact_gap",
+                title="Factor batch stock counts are internally inconsistent.",
+                evidence=[f"stock_count={stock_count} success_count={success_count} failed_count={failed_count}"],
+                expected="success_count + failed_count should equal stock_count.",
+                suggested_fix="Regenerate the batch summary from stock-results.jsonl before trusting aggregate statistics.",
+            )
+        )
+
+    if failed_count:
+        findings.append(
+            _finding(
+                severity="high",
+                category="artifact_gap",
+                title="Factor batch contains failed stocks.",
+                evidence=[f"failed_count={failed_count}"],
+                expected="Batch-level factor ranking should only pass review when all requested stocks completed or failures are explicitly excluded by a new aggregate.",
+                suggested_fix="Retry failed stocks and create a completed combined aggregate artifact.",
+            )
+        )
+
+    ts_codes = [str(result.get("ts_code")) for result in stock_results if result.get("ts_code")]
+    duplicate_ts_codes = sorted({ts_code for ts_code in ts_codes if ts_codes.count(ts_code) > 1})
+    if duplicate_ts_codes:
+        findings.append(
+            _finding(
+                severity="high",
+                category="traceability_gap",
+                title="Factor batch stock results contain duplicate stock codes.",
+                evidence=[f"duplicates={duplicate_ts_codes}"],
+                expected="Each stock should appear once after retry merge so aggregate rows are not double-counted.",
+                suggested_fix="Fix batch aggregation merge logic or regenerate the combined batch.",
+            )
+        )
+    if len(ts_codes) != stock_count:
+        findings.append(
+            _finding(
+                severity="high",
+                category="artifact_gap",
+                title="Factor batch stock result rows do not match stock_count.",
+                evidence=[f"stock_count={stock_count} stock_result_rows={len(ts_codes)}"],
+                expected="stock_results should include one row per requested stock.",
+                suggested_fix="Regenerate factor-batch-summary.json from the stock result log.",
+            )
+        )
+
+    completed_results = [result for result in stock_results if result.get("status") == "completed"]
+    failed_results = [result for result in stock_results if result.get("status") != "completed"]
+    stock_results_log = artifacts.get("stock_results_log", [])
+    if len(completed_results) != success_count or len(failed_results) != failed_count:
+        findings.append(
+            _finding(
+                severity="medium",
+                category="artifact_gap",
+                title="Factor batch success/failure counters do not match stock result statuses.",
+                evidence=[
+                    f"success_count={success_count} completed_rows={len(completed_results)} "
+                    f"failed_count={failed_count} failed_rows={len(failed_results)}"
+                ],
+                expected="Summary counters should be derived directly from stock_results statuses.",
+                suggested_fix="Regenerate the batch summary or inspect manual edits to factor-batch-summary.json.",
+            )
+        )
+    if stock_results_log and len(stock_results_log) != len(stock_results):
+        findings.append(
+            _finding(
+                severity="medium",
+                category="traceability_gap",
+                title="Factor batch stock result log does not match summary rows.",
+                evidence=[f"stock_results_log_rows={len(stock_results_log)} summary_stock_results={len(stock_results)}"],
+                expected="When stock-results.jsonl exists, it should contain one row per summary stock result.",
+                suggested_fix="Regenerate the summary from stock-results.jsonl or preserve the immutable original log.",
+            )
+        )
+    elif stock_results_log:
+        summary_rows_by_stock = {str(result.get("ts_code")): result for result in stock_results if result.get("ts_code")}
+        log_rows_by_stock = {str(result.get("ts_code")): result for result in stock_results_log if result.get("ts_code")}
+        if set(summary_rows_by_stock) != set(log_rows_by_stock):
+            findings.append(
+                _finding(
+                    severity="high",
+                    category="traceability_gap",
+                    title="Factor batch stock result log stock set differs from summary.",
+                    evidence=[
+                        f"summary_ts_codes={sorted(summary_rows_by_stock)} "
+                        f"log_ts_codes={sorted(log_rows_by_stock)}"
+                    ],
+                    expected="factor-batch-summary.json should preserve the same stock set as the immutable stock-results.jsonl log.",
+                    suggested_fix="Regenerate the summary from stock-results.jsonl or investigate artifact tampering.",
+                )
+            )
+        else:
+            mismatched_log_rows = [
+                ts_code
+                for ts_code, summary_row in summary_rows_by_stock.items()
+                if _canonical_stock_result_for_log(summary_row) != _canonical_stock_result_for_log(log_rows_by_stock[ts_code])
+            ]
+            if mismatched_log_rows:
+                findings.append(
+                    _finding(
+                        severity="high",
+                        category="traceability_gap",
+                        title="Factor batch summary rows differ from immutable stock result log.",
+                        evidence=[f"mismatched_ts_codes={sorted(mismatched_log_rows)}"],
+                        expected="Summary stock results should match stock-results.jsonl for status, provenance refs, observations, and factor payload shape.",
+                        suggested_fix="Regenerate factor-batch-summary.json from stock-results.jsonl before reviewing the aggregate.",
+                    )
+                )
+
+    for result in completed_results:
+        ts_code = result.get("ts_code")
+        missing_refs = [
+            field
+            for field in ("factor_run_id", "factor_run_dir", "evaluation_id", "evaluation_dir")
+            if not result.get(field)
+        ]
+        if missing_refs:
+            findings.append(
+                _finding(
+                    severity="high",
+                    category="traceability_gap",
+                    title="Completed stock result is missing provenance references.",
+                    evidence=[f"ts_code={ts_code} missing={missing_refs}"],
+                    expected="Completed stock results should link to factor run and evaluation artifact directories.",
+                    suggested_fix="Fix the batch runner return payload before using the aggregate as evidence.",
+                )
+            )
+        missing_dirs = [
+            field
+            for field in ("factor_run_dir", "evaluation_dir")
+            if result.get(field) and not Path(str(result[field])).exists()
+        ]
+        if missing_dirs:
+            findings.append(
+                _finding(
+                    severity="high",
+                    category="traceability_gap",
+                    title="Completed stock result references missing artifact directories.",
+                    evidence=[f"ts_code={ts_code} missing_dirs={missing_dirs}"],
+                    expected="factor_run_dir and evaluation_dir should resolve to local immutable artifacts.",
+                    suggested_fix="Restore the referenced run/evaluation artifacts or regenerate the batch with valid refs.",
+                )
+            )
+        if int(result.get("observation_count", 0) or 0) <= 0:
+            findings.append(
+                _finding(
+                    severity="high",
+                    category="artifact_gap",
+                    title="Completed stock result has no evaluation observations.",
+                    evidence=[f"ts_code={ts_code} observation_count={result.get('observation_count')}"],
+                    expected="Each completed stock should have positive backtest/evaluation observations.",
+                    suggested_fix="Inspect evaluator date alignment and future-price coverage for this stock.",
+                )
+            )
+        if not result.get("summary_by_factor"):
+            findings.append(
+                _finding(
+                    severity="high",
+                    category="artifact_gap",
+                    title="Completed stock result has no factor summaries.",
+                    evidence=[f"ts_code={ts_code} summary_by_factor is empty"],
+                    expected="Each completed stock should contribute per-factor diagnostics to the aggregate.",
+                    suggested_fix="Rerun factor evaluation for the affected stock.",
+                )
+            )
+
+    if success_count and not aggregate_summary:
+        findings.append(
+            _finding(
+                severity="high",
+                category="artifact_gap",
+                title="Completed factor batch has no aggregate factor summary.",
+                evidence=[f"success_count={success_count} aggregate_summary_length=0"],
+                expected="Successful batches should produce aggregate rows across factor_id and observation offsets.",
+                suggested_fix="Fix aggregate summary generation before reviewing factor ranking.",
+            )
+        )
+
+    expected_aggregate_keys = _expected_factor_batch_aggregate_keys(completed_results)
+    actual_aggregate_keys = {
+        (str(row.get("factor_id")), int(row.get("offset_days")))
+        for row in aggregate_summary
+        if row.get("factor_id") is not None and row.get("offset_days") is not None
+    }
+    missing_aggregate_keys = sorted(expected_aggregate_keys - actual_aggregate_keys)
+    if missing_aggregate_keys:
+        findings.append(
+            _finding(
+                severity="high",
+                category="coverage_gap",
+                title="Aggregate factor summary is missing expected factor/offset rows.",
+                evidence=[f"missing_keys={missing_aggregate_keys[:20]} total_missing={len(missing_aggregate_keys)}"],
+                expected="aggregate_summary should include every factor_id and offset_days pair emitted by completed stock evaluations.",
+                suggested_fix="Regenerate aggregate_summary from completed stock summary_by_factor entries.",
+            )
+        )
+
+    for row in aggregate_summary:
+        factor_id = row.get("factor_id")
+        offset_days = row.get("offset_days")
+        row_stock_count = int(row.get("stock_count", 0) or 0)
+        if row_stock_count <= 0 or row_stock_count > success_count:
+            findings.append(
+                _finding(
+                    severity="high",
+                    category="artifact_gap",
+                    title="Aggregate factor row has invalid stock coverage.",
+                    evidence=[f"factor_id={factor_id} offset_days={offset_days} stock_count={row_stock_count} success_count={success_count}"],
+                    expected="Aggregate row stock_count should be positive and no larger than completed stock count.",
+                    suggested_fix="Check aggregate grouping and completed-stock filtering.",
+                )
+            )
+        elif row_stock_count < success_count:
+            findings.append(
+                _finding(
+                    severity="medium",
+                    category="coverage_gap",
+                    title="Aggregate factor row does not cover every completed stock.",
+                    evidence=[f"factor_id={factor_id} offset_days={offset_days} stock_count={row_stock_count} success_count={success_count}"],
+                    expected="Current batch factors are expected to be produced for every completed stock unless documented otherwise.",
+                    suggested_fix="Inspect missing stock/factor combinations and document intentional exclusions.",
+                )
+            )
+        if int(row.get("total_available_count", 0) or 0) <= 0:
+            findings.append(
+                _finding(
+                    severity="high",
+                    category="artifact_gap",
+                    title="Aggregate factor row has no available observations.",
+                    evidence=[f"factor_id={factor_id} offset_days={offset_days} total_available_count={row.get('total_available_count')}"],
+                    expected="Aggregate rows should have positive available observations before being ranked.",
+                    suggested_fix="Exclude unavailable rows or fix future-return coverage.",
+                )
+            )
+        direction = row.get("direction_consistency")
+        if direction not in EXPECTED_BATCH_DIRECTIONS:
+            findings.append(
+                _finding(
+                    severity="medium",
+                    category="schema_mismatch",
+                    title="Aggregate factor row has an unknown direction_consistency value.",
+                    evidence=[f"factor_id={factor_id} offset_days={offset_days} direction_consistency={direction}"],
+                    expected=f"direction_consistency should be one of {sorted(EXPECTED_BATCH_DIRECTIONS)}.",
+                    suggested_fix="Update the batch report schema or reviewer enum together.",
+                )
+            )
+
+    report = str(artifacts.get("aggregate_report", ""))
+    expected_mentions = [
+        f"Batch: `{summary.get('batch_id')}`",
+        f"Status: `{summary.get('status')}`",
+        f"Success / failed: `{success_count} / {failed_count}`",
+    ]
+    missing_report_mentions = [mention for mention in expected_mentions if mention not in report]
+    if missing_report_mentions:
+        findings.append(
+            _finding(
+                severity="medium",
+                category="report_gap",
+                title="Aggregate factor report is missing batch summary fields.",
+                evidence=[f"Missing mentions: {missing_report_mentions}"],
+                expected="Report should state batch id, completion status, and success/failed counts.",
+                suggested_fix="Update the aggregate report renderer and regenerate the batch artifact.",
+            )
+        )
+
+    return findings
+
+
+def _canonical_stock_result_for_log(result: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "ts_code": result.get("ts_code"),
+        "status": result.get("status"),
+        "factor_run_id": result.get("factor_run_id"),
+        "factor_run_dir": result.get("factor_run_dir"),
+        "evaluation_id": result.get("evaluation_id"),
+        "evaluation_dir": result.get("evaluation_dir"),
+        "observation_count": result.get("observation_count"),
+        "summary_by_factor": result.get("summary_by_factor", []),
+        "error_type": result.get("error_type"),
+        "error_message": result.get("error_message"),
+    }
+
+
+def _expected_factor_batch_aggregate_keys(completed_results: list[dict[str, Any]]) -> set[tuple[str, int]]:
+    keys = set()
+    for result in completed_results:
+        for factor_summary in result.get("summary_by_factor", []):
+            factor_id = factor_summary.get("factor_id")
+            if factor_id is None:
+                continue
+            for offset_summary in factor_summary.get("offsets", []):
+                offset_days = offset_summary.get("offset_days")
+                if offset_days is not None:
+                    keys.add((str(factor_id), int(offset_days)))
+    return keys
+
+
 def _build_external_review_payload(
     review_id: str,
     run_id: str,
@@ -948,6 +1432,68 @@ def _build_factor_external_review_payload(
         "cache_artifact_count": len(artifacts.get("cache_artifacts", [])),
         "deterministic_findings": deterministic_findings,
     }
+
+
+def _build_factor_batch_external_review_payload(
+    review_id: str,
+    run_id: str,
+    plan_snapshot: dict[str, Any],
+    artifacts: dict[str, Any],
+    deterministic_findings: list[dict[str, Any]],
+) -> dict[str, Any]:
+    summary = artifacts.get("batch_summary", {})
+    return {
+        "review_id": review_id,
+        "run_id": run_id,
+        "artifact_type": "factor_batch",
+        "plan_documents": [
+            {
+                "path": doc.get("path"),
+                "excerpt": str(doc.get("content", ""))[:1800],
+            }
+            for doc in plan_snapshot.get("documents", [])
+        ],
+        "batch_status": {
+            "batch_id": summary.get("batch_id"),
+            "status": summary.get("status"),
+            "stock_count": summary.get("stock_count"),
+            "success_count": summary.get("success_count"),
+            "failed_count": summary.get("failed_count"),
+            "source_batch_ids": summary.get("source_batch_ids", []),
+        },
+        "stock_results_summary": [
+            {
+                "ts_code": result.get("ts_code"),
+                "status": result.get("status"),
+                "factor_run_id": result.get("factor_run_id"),
+                "evaluation_id": result.get("evaluation_id"),
+                "observation_count": result.get("observation_count"),
+                "factor_summary_count": len(result.get("summary_by_factor", [])),
+                "error_type": result.get("error_type"),
+            }
+            for result in summary.get("stock_results", [])
+        ],
+        "top_aggregate_rows": _top_factor_batch_rows(summary.get("aggregate_summary", [])),
+        "aggregate_report_excerpt": str(artifacts.get("aggregate_report", ""))[:6000],
+        "deterministic_findings": deterministic_findings,
+    }
+
+
+def _top_factor_batch_rows(rows: list[dict[str, Any]], limit: int = 20) -> list[dict[str, Any]]:
+    sortable = [row for row in rows if row.get("mean_pearson_correlation") is not None]
+    sortable.sort(key=lambda row: abs(float(row["mean_pearson_correlation"])), reverse=True)
+    return [
+        {
+            "factor_id": row.get("factor_id"),
+            "offset_days": row.get("offset_days"),
+            "stock_count": row.get("stock_count"),
+            "total_available_count": row.get("total_available_count"),
+            "mean_pearson_correlation": row.get("mean_pearson_correlation"),
+            "mean_top_minus_bottom_return": row.get("mean_top_minus_bottom_return"),
+            "direction_consistency": row.get("direction_consistency"),
+        }
+        for row in sortable[:limit]
+    ]
 
 
 def _summarize_backtest_scores(backtest_scores: list[dict[str, Any]]) -> list[dict[str, Any]]:

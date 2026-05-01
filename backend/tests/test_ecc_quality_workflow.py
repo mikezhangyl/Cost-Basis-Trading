@@ -6,8 +6,10 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from scripts.ecc_quality_workflow import (
+    find_latest_factor_batch,
     find_latest_factor_run,
     find_latest_research_run,
+    review_latest_factor_batch,
     review_latest_factor,
     review_latest_research,
     run_quality_gate,
@@ -82,6 +84,56 @@ def test_find_latest_factor_run_uses_manifest_completed_at_before_name(tmp_path:
     latest = find_latest_factor_run(factor_root)
 
     assert latest.name == "factor-run-a-new"
+
+
+def test_review_latest_factor_batch_runs_artifact_reviewer_for_newest_batch(tmp_path: Path) -> None:
+    batch_root = tmp_path / "factor-batches"
+    _write_factor_batch(batch_root, "factor-batch-20260501-000001-aaaaaaaa", completed_at="2026-05-01T00:00:00+00:00")
+    _write_factor_batch(batch_root, "factor-batch-20260501-000002-bbbbbbbb", completed_at="2026-05-02T00:00:00+00:00")
+
+    result = review_latest_factor_batch(factor_batch_root=batch_root)
+
+    assert result.workflow == "review-latest-factor-batch"
+    assert result.run_id == "factor-batch-20260501-000002-bbbbbbbb"
+    assert result.review.status == "passed"
+    review_dir = Path(result.review.artifact_dir)
+    assert (review_dir.parent / "latest.json").exists()
+    assert (review_dir / "review-config.json").exists()
+    assert (review_dir / "source-artifacts.json").exists()
+    assert result.quality_subagent_prompt == str(review_dir / "quality-subagent-review-prompt.md")
+
+
+def test_find_latest_factor_batch_fails_when_no_batches_exist(tmp_path: Path) -> None:
+    try:
+        find_latest_factor_batch(tmp_path / "factor-batches")
+    except FileNotFoundError as error:
+        assert "No factor batches found" in str(error)
+    else:
+        raise AssertionError("Expected missing factor batches to fail.")
+
+
+def test_find_latest_factor_batch_uses_summary_completed_at_before_name(tmp_path: Path) -> None:
+    batch_root = tmp_path / "factor-batches"
+    _write_factor_batch(batch_root, "factor-batch-z-old", completed_at="2026-01-01T00:00:00+00:00")
+    _write_factor_batch(batch_root, "factor-batch-a-new", completed_at="2026-01-02T00:00:00+00:00")
+
+    latest = find_latest_factor_batch(batch_root)
+
+    assert latest.name == "factor-batch-a-new"
+
+
+def test_find_latest_factor_batch_uses_summary_created_at_for_aggregate_batches(tmp_path: Path) -> None:
+    batch_root = tmp_path / "factor-batches"
+    _write_factor_batch(batch_root, "factor-batch-z-old", completed_at="2026-01-01T00:00:00+00:00")
+    _write_factor_batch(batch_root, "factor-batch-a-new", completed_at="2026-01-02T00:00:00+00:00")
+    new_summary_path = batch_root / "factor-batch-a-new" / "factor-batch-summary.json"
+    new_summary = json.loads(new_summary_path.read_text())
+    new_summary["created_at"] = new_summary.pop("completed_at")
+    new_summary_path.write_text(json.dumps(new_summary), encoding="utf-8")
+
+    latest = find_latest_factor_batch(batch_root)
+
+    assert latest.name == "factor-batch-a-new"
 
 
 def test_quality_workflow_cli_reviews_latest_research_run(tmp_path: Path) -> None:
@@ -168,6 +220,31 @@ def test_quality_workflow_cli_reviews_latest_factor_run(tmp_path: Path) -> None:
     payload = json.loads(completed.stdout)
     assert payload["workflow"] == "review-latest-factor"
     assert payload["run_id"] == "factor-run-20260501-000001-aaaaaaaa"
+    assert payload["quality_subagent_prompt"].endswith("quality-subagent-review-prompt.md")
+
+
+def test_quality_workflow_cli_reviews_latest_factor_batch(tmp_path: Path) -> None:
+    batch_root = tmp_path / "factor-batches"
+    _write_factor_batch(batch_root, "factor-batch-20260501-000001-aaaaaaaa")
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/ecc_quality_workflow.py",
+            "review-latest-factor-batch",
+            "--factor-batch-root",
+            str(batch_root),
+        ],
+        check=True,
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(completed.stdout)
+    assert payload["workflow"] == "review-latest-factor-batch"
+    assert payload["run_id"] == "factor-batch-20260501-000001-aaaaaaaa"
+    assert payload["review"]["status"] == "passed"
     assert payload["quality_subagent_prompt"].endswith("quality-subagent-review-prompt.md")
 
 
@@ -305,3 +382,79 @@ def _write_factor_run(factor_root: Path, run_id: str, completed_at: str = "2026-
     )
     (run_dir / "api-retry-events.jsonl").write_text("", encoding="utf-8")
     (run_dir / "worker-events.jsonl").write_text(json.dumps({"event": "factor_run_started"}) + "\n", encoding="utf-8")
+
+
+def _write_factor_batch(
+    batch_root: Path,
+    batch_id: str,
+    completed_at: str = "2026-05-01T00:00:00+00:00",
+) -> None:
+    batch_dir = batch_root / batch_id
+    batch_dir.mkdir(parents=True, exist_ok=True)
+    factor_run_dir = batch_dir / "factor-runs" / f"factor-run-{batch_id}-000001-SZ"
+    evaluation_dir = factor_run_dir / "factor-evaluations" / f"factor-eval-{batch_id}-000001-SZ"
+    evaluation_dir.mkdir(parents=True, exist_ok=True)
+    stock_result = {
+        "ts_code": "000001.SZ",
+        "status": "completed",
+        "factor_run_id": f"factor-run-{batch_id}-000001-SZ",
+        "factor_run_dir": str(factor_run_dir),
+        "evaluation_id": f"factor-eval-{batch_id}-000001-SZ",
+        "evaluation_dir": str(evaluation_dir),
+        "observation_count": 10,
+        "summary_by_factor": [
+            {
+                "factor_id": "profit_ratio_asof",
+                "offsets": [
+                    {
+                        "offset_days": 1,
+                        "available_count": 10,
+                        "unavailable_count": 0,
+                        "pearson_correlation": -0.2,
+                        "top_minus_bottom_return": -0.01,
+                    }
+                ],
+            }
+        ],
+    }
+    summary = {
+        "batch_id": batch_id,
+        "status": "completed",
+        "completed_at": completed_at,
+        "stock_count": 1,
+        "success_count": 1,
+        "failed_count": 0,
+        "stock_results": [stock_result],
+        "aggregate_summary": [
+            {
+                "batch_id": batch_id,
+                "factor_id": "profit_ratio_asof",
+                "offset_days": 1,
+                "stock_count": 1,
+                "total_available_count": 10,
+                "total_unavailable_count": 0,
+                "mean_pearson_correlation": -0.2,
+                "positive_correlation_count": 0,
+                "negative_correlation_count": 1,
+                "mean_top_minus_bottom_return": -0.01,
+                "high_factor_outperforms_count": 0,
+                "low_factor_outperforms_count": 1,
+                "direction_consistency": "LOW_FACTOR_OUTPERFORMS_ALL",
+            }
+        ],
+    }
+    (batch_dir / "factor-batch-summary.json").write_text(json.dumps(summary), encoding="utf-8")
+    (batch_dir / "aggregate-factor-report.md").write_text(
+        "\n".join(
+            [
+                "# Aggregate Factor Batch Report",
+                "",
+                f"- Batch: `{batch_id}`",
+                "- Status: `completed`",
+                "- Stocks: `1`",
+                "- Success / failed: `1 / 0`",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )

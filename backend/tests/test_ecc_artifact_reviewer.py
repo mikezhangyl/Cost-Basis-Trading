@@ -8,6 +8,7 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 from scripts.ecc_artifact_reviewer import (
     EccArtifactReviewer,
     StaticArtifactReviewClient,
+    collect_factor_batch_source_artifacts,
     collect_factor_source_artifacts,
     collect_source_artifacts,
 )
@@ -334,6 +335,224 @@ def test_collect_factor_source_artifacts_includes_cache_provenance(tmp_path: Pat
     assert artifacts["stock_artifacts"][0]["files"]["quality_ref"]["content"]["quality_status_counts"] == {"OK": 2}
 
 
+def test_ecc_artifact_reviewer_passes_complete_factor_batch(tmp_path: Path) -> None:
+    batch_root = tmp_path / "factor-batches"
+    plan_root = tmp_path / "plans"
+    _write_plan_docs(plan_root)
+    _write_factor_batch(batch_root, "factor-batch-test-1")
+    reviewer = EccArtifactReviewer(
+        factor_batch_root=batch_root,
+        plan_doc_paths=[plan_root / "current-state.md", plan_root / "architecture.md"],
+    )
+
+    result = reviewer.review_factor_batch("factor-batch-test-1")
+
+    assert result.status == "passed"
+    assert result.findings_count == 0
+    review_dir = Path(result.artifact_dir)
+    assert review_dir.parent == batch_root / "factor-batch-test-1" / "ecc-artifact-reviews"
+    review_config = json.loads((review_dir / "review-config.json").read_text())
+    assert review_config["artifact_type"] == "factor_batch"
+    assert "Factor Batch" in (review_dir / "artifact-review-report.md").read_text()
+    source_artifacts = json.loads((review_dir / "source-artifacts.json").read_text())
+    assert source_artifacts["artifact_type"] == "factor_batch"
+    assert source_artifacts["batch_summary"]["success_count"] == 2
+    assert source_artifacts["batch_summary"]["aggregate_summary"][0]["factor_id"] == "profit_ratio_asof"
+
+
+def test_ecc_artifact_reviewer_flags_partial_factor_batch(tmp_path: Path) -> None:
+    batch_root = tmp_path / "factor-batches"
+    plan_root = tmp_path / "plans"
+    _write_plan_docs(plan_root)
+    _write_factor_batch(batch_root, "factor-batch-test-1", status="partial", failed_count=1)
+    reviewer = EccArtifactReviewer(
+        factor_batch_root=batch_root,
+        plan_doc_paths=[plan_root / "current-state.md", plan_root / "architecture.md"],
+    )
+
+    result = reviewer.review_factor_batch("factor-batch-test-1")
+
+    assert result.status == "needs_fix"
+    findings = json.loads((Path(result.artifact_dir) / "findings.json").read_text())
+    assert any(finding["category"] == "artifact_gap" for finding in findings["findings"])
+
+
+def test_ecc_artifact_reviewer_flags_duplicate_factor_batch_stock_result(tmp_path: Path) -> None:
+    batch_root = tmp_path / "factor-batches"
+    plan_root = tmp_path / "plans"
+    _write_plan_docs(plan_root)
+    _write_factor_batch(batch_root, "factor-batch-test-1", duplicate_stock=True)
+    reviewer = EccArtifactReviewer(
+        factor_batch_root=batch_root,
+        plan_doc_paths=[plan_root / "current-state.md", plan_root / "architecture.md"],
+    )
+
+    result = reviewer.review_factor_batch("factor-batch-test-1")
+
+    assert result.status == "needs_fix"
+    findings = json.loads((Path(result.artifact_dir) / "findings.json").read_text())
+    assert any("duplicate" in finding["title"].lower() for finding in findings["findings"])
+
+
+def test_ecc_artifact_reviewer_flags_missing_factor_batch_artifact_dir(tmp_path: Path) -> None:
+    batch_root = tmp_path / "factor-batches"
+    plan_root = tmp_path / "plans"
+    _write_plan_docs(plan_root)
+    _write_factor_batch(batch_root, "factor-batch-test-1")
+    summary_path = batch_root / "factor-batch-test-1" / "factor-batch-summary.json"
+    summary = json.loads(summary_path.read_text())
+    summary["stock_results"][0]["evaluation_dir"] = str(tmp_path / "missing-evaluation-dir")
+    summary_path.write_text(json.dumps(summary), encoding="utf-8")
+    reviewer = EccArtifactReviewer(
+        factor_batch_root=batch_root,
+        plan_doc_paths=[plan_root / "current-state.md", plan_root / "architecture.md"],
+    )
+
+    result = reviewer.review_factor_batch("factor-batch-test-1")
+
+    assert result.status == "needs_fix"
+    findings = json.loads((Path(result.artifact_dir) / "findings.json").read_text())
+    assert any("missing artifact directories" in finding["title"] for finding in findings["findings"])
+
+
+def test_ecc_artifact_reviewer_flags_factor_batch_summary_log_divergence(tmp_path: Path) -> None:
+    batch_root = tmp_path / "factor-batches"
+    plan_root = tmp_path / "plans"
+    _write_plan_docs(plan_root)
+    _write_factor_batch(batch_root, "factor-batch-test-1")
+    summary_path = batch_root / "factor-batch-test-1" / "factor-batch-summary.json"
+    summary = json.loads(summary_path.read_text())
+    summary["stock_results"][0]["status"] = "completed"
+    summary["stock_results"][0]["observation_count"] = 999
+    summary_path.write_text(json.dumps(summary), encoding="utf-8")
+    reviewer = EccArtifactReviewer(
+        factor_batch_root=batch_root,
+        plan_doc_paths=[plan_root / "current-state.md", plan_root / "architecture.md"],
+    )
+
+    result = reviewer.review_factor_batch("factor-batch-test-1")
+
+    assert result.status == "needs_fix"
+    findings = json.loads((Path(result.artifact_dir) / "findings.json").read_text())
+    assert any("immutable stock result log" in finding["title"] for finding in findings["findings"])
+
+
+def test_ecc_artifact_reviewer_flags_missing_factor_batch_aggregate_key(tmp_path: Path) -> None:
+    batch_root = tmp_path / "factor-batches"
+    plan_root = tmp_path / "plans"
+    _write_plan_docs(plan_root)
+    _write_factor_batch(batch_root, "factor-batch-test-1")
+    summary_path = batch_root / "factor-batch-test-1" / "factor-batch-summary.json"
+    summary = json.loads(summary_path.read_text())
+    summary["aggregate_summary"] = []
+    summary_path.write_text(json.dumps(summary), encoding="utf-8")
+    report_path = batch_root / "factor-batch-test-1" / "aggregate-factor-report.md"
+    report_path.write_text(report_path.read_text() + "\n- No aggregate rows.\n", encoding="utf-8")
+    reviewer = EccArtifactReviewer(
+        factor_batch_root=batch_root,
+        plan_doc_paths=[plan_root / "current-state.md", plan_root / "architecture.md"],
+    )
+
+    result = reviewer.review_factor_batch("factor-batch-test-1")
+
+    assert result.status == "needs_fix"
+    findings = json.loads((Path(result.artifact_dir) / "findings.json").read_text())
+    assert any("missing expected factor/offset rows" in finding["title"] for finding in findings["findings"])
+
+
+def test_ecc_artifact_reviewer_flags_partial_missing_factor_batch_aggregate_key(tmp_path: Path) -> None:
+    batch_root = tmp_path / "factor-batches"
+    plan_root = tmp_path / "plans"
+    _write_plan_docs(plan_root)
+    _write_factor_batch(batch_root, "factor-batch-test-1")
+    summary_path = batch_root / "factor-batch-test-1" / "factor-batch-summary.json"
+    summary = json.loads(summary_path.read_text())
+    for stock_result in summary["stock_results"]:
+        stock_result["summary_by_factor"][0]["offsets"].append(
+            {
+                "offset_days": 3,
+                "available_count": 10,
+                "unavailable_count": 0,
+                "pearson_correlation": -0.1,
+                "top_minus_bottom_return": -0.02,
+            }
+        )
+    summary_path.write_text(json.dumps(summary), encoding="utf-8")
+    (batch_root / "factor-batch-test-1" / "stock-results.jsonl").write_text(
+        "".join(json.dumps(result) + "\n" for result in summary["stock_results"]),
+        encoding="utf-8",
+    )
+    reviewer = EccArtifactReviewer(
+        factor_batch_root=batch_root,
+        plan_doc_paths=[plan_root / "current-state.md", plan_root / "architecture.md"],
+    )
+
+    result = reviewer.review_factor_batch("factor-batch-test-1")
+
+    assert result.status == "needs_fix"
+    findings = json.loads((Path(result.artifact_dir) / "findings.json").read_text())
+    assert any("missing expected factor/offset rows" in finding["title"] for finding in findings["findings"])
+
+
+def test_ecc_artifact_reviewer_flags_zero_factor_batch_observations(tmp_path: Path) -> None:
+    batch_root = tmp_path / "factor-batches"
+    plan_root = tmp_path / "plans"
+    _write_plan_docs(plan_root)
+    _write_factor_batch(batch_root, "factor-batch-test-1")
+    summary_path = batch_root / "factor-batch-test-1" / "factor-batch-summary.json"
+    summary = json.loads(summary_path.read_text())
+    summary["stock_results"][0]["observation_count"] = 0
+    summary_path.write_text(json.dumps(summary), encoding="utf-8")
+    (batch_root / "factor-batch-test-1" / "stock-results.jsonl").write_text(
+        "".join(json.dumps(result) + "\n" for result in summary["stock_results"]),
+        encoding="utf-8",
+    )
+    reviewer = EccArtifactReviewer(
+        factor_batch_root=batch_root,
+        plan_doc_paths=[plan_root / "current-state.md", plan_root / "architecture.md"],
+    )
+
+    result = reviewer.review_factor_batch("factor-batch-test-1")
+
+    assert result.status == "needs_fix"
+    findings = json.loads((Path(result.artifact_dir) / "findings.json").read_text())
+    assert any("no evaluation observations" in finding["title"] for finding in findings["findings"])
+
+
+def test_ecc_artifact_reviewer_flags_zero_factor_batch_aggregate_available_count(tmp_path: Path) -> None:
+    batch_root = tmp_path / "factor-batches"
+    plan_root = tmp_path / "plans"
+    _write_plan_docs(plan_root)
+    _write_factor_batch(batch_root, "factor-batch-test-1")
+    summary_path = batch_root / "factor-batch-test-1" / "factor-batch-summary.json"
+    summary = json.loads(summary_path.read_text())
+    summary["aggregate_summary"][0]["total_available_count"] = 0
+    summary_path.write_text(json.dumps(summary), encoding="utf-8")
+    reviewer = EccArtifactReviewer(
+        factor_batch_root=batch_root,
+        plan_doc_paths=[plan_root / "current-state.md", plan_root / "architecture.md"],
+    )
+
+    result = reviewer.review_factor_batch("factor-batch-test-1")
+
+    assert result.status == "needs_fix"
+    findings = json.loads((Path(result.artifact_dir) / "findings.json").read_text())
+    assert any("no available observations" in finding["title"] for finding in findings["findings"])
+
+
+def test_collect_factor_batch_source_artifacts_includes_traceability_logs(tmp_path: Path) -> None:
+    batch_root = tmp_path / "factor-batches"
+    _write_factor_batch(batch_root, "factor-batch-test-1")
+
+    artifacts = collect_factor_batch_source_artifacts(batch_root / "factor-batch-test-1")
+
+    assert artifacts["artifact_type"] == "factor_batch"
+    assert artifacts["batch_summary"]["batch_id"] == "factor-batch-test-1"
+    assert artifacts["stock_results_log"][0]["ts_code"] == "000001.SZ"
+    assert artifacts["batch_events"][0]["event"] == "batch_started"
+    assert "Aggregate Factor Batch Report" in artifacts["aggregate_report"]
+
+
 def _write_plan_docs(plan_root: Path) -> None:
     plan_root.mkdir(parents=True)
     (plan_root / "current-state.md").write_text(
@@ -601,6 +820,134 @@ def _write_factor_run(
     manifest = json.loads((run_dir / "factor-run-manifest.json").read_text())
     manifest["stock_outputs"][0]["checksums"] = actual_checksums
     (run_dir / "factor-run-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+
+def _write_factor_batch(
+    batch_root: Path,
+    batch_id: str,
+    status: str = "completed",
+    failed_count: int = 0,
+    duplicate_stock: bool = False,
+) -> None:
+    batch_dir = batch_root / batch_id
+    batch_dir.mkdir(parents=True, exist_ok=True)
+    completed_results = [
+        _factor_batch_stock_result("000001.SZ", batch_id, batch_dir),
+        _factor_batch_stock_result("600519.SH" if not duplicate_stock else "000001.SZ", batch_id, batch_dir),
+    ]
+    failed_results = [
+        {
+            "ts_code": "300750.SZ",
+            "status": "failed",
+            "factor_run_id": f"factor-run-{batch_id}-300750-SZ",
+            "error_type": "ConnectionError",
+            "error_message": "temporary upstream failure",
+        }
+        for _ in range(failed_count)
+    ]
+    stock_results = completed_results + failed_results
+    success_count = len(completed_results)
+    aggregate_stock_count = success_count
+    summary = {
+        "batch_id": batch_id,
+        "status": status,
+        "completed_at": "2026-05-01T00:00:00+00:00",
+        "stock_count": len(stock_results),
+        "success_count": success_count,
+        "failed_count": failed_count,
+        "stock_results": stock_results,
+        "aggregate_summary": [
+            {
+                "batch_id": batch_id,
+                "factor_id": "profit_ratio_asof",
+                "offset_days": 1,
+                "stock_count": aggregate_stock_count,
+                "total_available_count": 20,
+                "total_unavailable_count": 0,
+                "mean_pearson_correlation": -0.2,
+                "positive_correlation_count": 0,
+                "negative_correlation_count": aggregate_stock_count,
+                "mean_top_minus_bottom_return": -0.01,
+                "high_factor_outperforms_count": 0,
+                "low_factor_outperforms_count": aggregate_stock_count,
+                "direction_consistency": "LOW_FACTOR_OUTPERFORMS_ALL",
+            }
+        ],
+        "artifact_refs": {
+            "config": "factor-batch-config.json",
+            "events": "batch-events.jsonl",
+            "stock_results": "stock-results.jsonl",
+            "summary": "factor-batch-summary.json",
+            "aggregate_report": "aggregate-factor-report.md",
+        },
+    }
+    (batch_dir / "factor-batch-config.json").write_text(
+        json.dumps(
+            {
+                "batch_id": batch_id,
+                "stock_codes": [result["ts_code"] for result in stock_results],
+                "factor_start_date": "20260101",
+                "factor_end_date": "20260430",
+                "offsets": [1, 3, 5],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (batch_dir / "batch-events.jsonl").write_text(
+        json.dumps({"event": "batch_started", "batch_id": batch_id}) + "\n"
+        + json.dumps({"event": "batch_completed", "batch_id": batch_id, "status": status}) + "\n",
+        encoding="utf-8",
+    )
+    (batch_dir / "stock-results.jsonl").write_text(
+        "".join(json.dumps(result) + "\n" for result in stock_results),
+        encoding="utf-8",
+    )
+    (batch_dir / "factor-batch-summary.json").write_text(json.dumps(summary), encoding="utf-8")
+    (batch_dir / "aggregate-factor-report.md").write_text(
+        "\n".join(
+            [
+                "# Aggregate Factor Batch Report",
+                "",
+                f"- Batch: `{batch_id}`",
+                f"- Status: `{status}`",
+                f"- Stocks: `{len(stock_results)}`",
+                f"- Success / failed: `{success_count} / {failed_count}`",
+                "",
+                "This report compares factor diagnostics across stocks. It is not investment advice.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def _factor_batch_stock_result(ts_code: str, batch_id: str, batch_dir: Path) -> dict[str, object]:
+    safe_stock = ts_code.replace(".", "-")
+    factor_run_dir = batch_dir / "factor-runs" / f"factor-run-{batch_id}-{safe_stock}"
+    evaluation_dir = factor_run_dir / "factor-evaluations" / f"factor-eval-{batch_id}-{safe_stock}"
+    evaluation_dir.mkdir(parents=True, exist_ok=True)
+    return {
+        "ts_code": ts_code,
+        "status": "completed",
+        "factor_run_id": f"factor-run-{batch_id}-{safe_stock}",
+        "factor_run_dir": str(factor_run_dir),
+        "evaluation_id": f"factor-eval-{batch_id}-{safe_stock}",
+        "evaluation_dir": str(evaluation_dir),
+        "observation_count": 10,
+        "summary_by_factor": [
+            {
+                "factor_id": "profit_ratio_asof",
+                "offsets": [
+                    {
+                        "offset_days": 1,
+                        "available_count": 10,
+                        "unavailable_count": 0,
+                        "pearson_correlation": -0.2,
+                        "top_minus_bottom_return": -0.01,
+                    }
+                ],
+            }
+        ],
+    }
 
 
 def _test_file_checksum(path: Path) -> str:
