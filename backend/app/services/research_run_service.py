@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -139,6 +140,7 @@ class ResearchRunService:
                     "error": str(error),
                 }
 
+        ai_review = _ensure_report_observation_coverage(ai_review, samples)
         _write_json(aggregate_dir / "ai_review.json", _redact_sensitive_review(ai_review))
         _write_jsonl(
             aggregate_dir / "agent-decisions.jsonl",
@@ -439,12 +441,38 @@ def _build_ai_payload(
     samples: list[ResearchSampleResult],
     aggregate_scores: list[ResearchAggregateScore],
 ) -> dict[str, Any]:
+    observation_labels = _observation_labels()
     return {
         "run_id": run_id,
         "ts_code": ts_code,
         "window_days": request.window_days,
         "observation_offsets": OBSERVATION_OFFSETS,
+        "observation_labels": observation_labels,
         "scoring_policy": SCORING_POLICY,
+        "report_requirements": {
+            "canonical_observation_labels": observation_labels,
+            "observation_label_contract": (
+                "最终报告必须逐项覆盖 canonical_observation_labels 中的每个观察点；"
+                "即使某个观察点因为未来交易日不足为 N/A，也必须明确写出该标签和原因。"
+            ),
+            "traceability_contract": (
+                "最终报告需要引用 artifact_refs 或每个 sample 的 artifact_refs，说明结论来自哪些"
+                " feature/backtest/signal/API 调用产物；不能只给概括性判断。"
+            ),
+            "future_leak_contract": (
+                "只能基于 signal_date 当日及之前窗口生成策略信号；未来观察点仅用于评分。"
+                "若证据不足，必须说明 residual future-leak risk。"
+            ),
+            "investment_advice_contract": "只能做研究复核和实验建议，不提供真实个股投资建议。",
+        },
+        "artifact_refs": {
+            "run_config": "run-config.json",
+            "run_manifest": "run-manifest.json",
+            "api_calls": "api-calls.jsonl",
+            "aggregate_ai_review": "aggregate/ai_review.json",
+            "aggregate_agent_decisions": "aggregate/agent-decisions.jsonl",
+            "aggregate_report": "aggregate/final_report.md",
+        },
         "sample_count": len(samples),
         "candidate_strategy_ids": request.candidate_strategy_ids,
         "aggregate_scores": [score.model_dump(mode="json") for score in aggregate_scores],
@@ -454,6 +482,7 @@ def _build_ai_payload(
                 "start_date": sample.start_date,
                 "signal_date": sample.signal_date,
                 "status": sample.status,
+                "artifact_refs": _sample_artifact_refs(sample),
                 "strategies": [
                     {
                         "strategy_id": strategy.strategy_id,
@@ -475,6 +504,87 @@ def _build_ai_payload(
             for sample in samples
         ],
     }
+
+
+def _observation_labels() -> list[str]:
+    return [f"N+{offset}" for offset in OBSERVATION_OFFSETS]
+
+
+def _sample_artifact_refs(sample: ResearchSampleResult) -> dict[str, Any]:
+    sample_prefix = f"samples/{sample.sample_id}"
+    return {
+        "feature_set": f"{sample_prefix}/features/feature_set.json",
+        "feature_manifest": f"{sample_prefix}/features/manifest.json",
+        "signal_manifest": f"{sample_prefix}/signals/manifest.json",
+        "strategy_decision_log": f"{sample_prefix}/signals/agent_decision_log.jsonl",
+        "signal_files": [
+            f"{sample_prefix}/signals/signal_{strategy.strategy_id}.json"
+            for strategy in sample.strategies
+        ],
+        "backtest_score": f"{sample_prefix}/backtest/backtest_score.json",
+        "backtest_manifest": f"{sample_prefix}/backtest/manifest.json",
+    }
+
+
+def _ensure_report_observation_coverage(
+    ai_review: dict[str, Any],
+    samples: list[ResearchSampleResult],
+) -> dict[str, Any]:
+    report = str(ai_review.get("final_report", ""))
+    observation_labels = _observation_labels()
+    missing_labels = [label for label in observation_labels if not _contains_observation_label(report, label)]
+    validation = {
+        "canonical_observation_labels": observation_labels,
+        "missing_observation_labels": missing_labels,
+        "status": "passed" if not missing_labels else "corrected",
+    }
+    if not missing_labels:
+        return {**ai_review, "report_validation": validation}
+    corrected_report = "\n\n".join(
+        [
+            report.strip(),
+            _build_deterministic_observation_section(samples, observation_labels, missing_labels),
+        ]
+    ).strip()
+    return {**ai_review, "final_report": corrected_report, "report_validation": validation}
+
+
+def _build_deterministic_observation_section(
+    samples: list[ResearchSampleResult],
+    observation_labels: list[str],
+    missing_labels: list[str],
+) -> str:
+    lines = [
+        "## 确定性观察点覆盖校验",
+        "",
+        "AI 原始报告未逐项覆盖所有配置观察点，系统已追加本确定性覆盖摘要。",
+        f"配置观察点：{' / '.join(observation_labels)}",
+        f"原始报告缺失标签：{' / '.join(missing_labels)}",
+        "",
+        "样本观察点摘要：",
+    ]
+    for sample in samples:
+        lines.append(f"- {sample.sample_id} signal_date={sample.signal_date}")
+        for strategy in sample.strategies:
+            observation_summary = ", ".join(
+                f"N+{score.offset_days}={_format_observation_score(score)}"
+                for score in strategy.observation_scores
+            )
+            lines.append(
+                f"  - {strategy.strategy_id}: action={strategy.signal.action}, "
+                f"confidence={strategy.signal.confidence:.2f}, {observation_summary}"
+            )
+    return "\n".join(lines)
+
+
+def _format_observation_score(score: ResearchObservationScore) -> str:
+    if score.period_return is None:
+        return "N/A"
+    return f"{score.match_label}({score.period_return:.2%})"
+
+
+def _contains_observation_label(text: str, label: str) -> bool:
+    return re.search(rf"(?<![A-Za-z0-9]){re.escape(label)}(?!\d)", text) is not None
 
 
 def _redact_sensitive_review(review: dict[str, Any]) -> dict[str, Any]:

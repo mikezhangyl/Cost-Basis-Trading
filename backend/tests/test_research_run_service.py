@@ -67,16 +67,29 @@ class FakeResearchRunClient:
 
 class FakeResearchAgentClient:
     def analyze_research_run(self, payload: dict) -> dict:
+        observation_labels = ["N+1", "N+3", "N+5", "N+15", "N+30", "N+60", "N+90", "N+180"]
         assert payload["ts_code"] == "000001.SZ"
         assert payload["sample_count"] == 2
         assert payload["observation_offsets"] == [1, 3, 5, 15, 30, 60, 90, 180]
+        assert payload["observation_labels"] == observation_labels
         assert payload["scoring_policy"]["match_label"]["HOLD"].startswith("Always labeled NEUTRAL")
         assert payload["scoring_policy"]["match_label"]["N/A"].startswith("Observation unavailable")
+        assert payload["report_requirements"]["canonical_observation_labels"] == observation_labels
+        assert "必须逐项覆盖" in payload["report_requirements"]["observation_label_contract"]
+        assert "artifact_refs" in payload["report_requirements"]["traceability_contract"]
+        assert payload["artifact_refs"]["api_calls"] == "api-calls.jsonl"
+        assert payload["artifact_refs"]["aggregate_report"] == "aggregate/final_report.md"
+        sample_refs = payload["samples"][0]["artifact_refs"]
+        assert sample_refs["feature_manifest"].endswith("/features/manifest.json")
+        assert sample_refs["signal_manifest"].endswith("/signals/manifest.json")
+        assert sample_refs["strategy_decision_log"].endswith("/signals/agent_decision_log.jsonl")
+        assert sample_refs["backtest_manifest"].endswith("/backtest/manifest.json")
+        assert sample_refs["backtest_score"].endswith("/backtest/backtest_score.json")
         return {
             "status": "completed",
             "model": "fake-agent",
             "review_summary": "样本数量较少，当前只能作为流程验证。",
-            "final_report": "本次研究流程完成，两个候选策略均已评分。",
+            "final_report": "本次研究流程完成，已覆盖 N+1/N+3/N+5/N+15/N+30/N+60/N+90/N+180。",
             "agent_decisions": [
                 {
                     "agent": "critic-agent",
@@ -89,6 +102,28 @@ class FakeResearchAgentClient:
                     "reasoning_summary": "生成最终研究摘要。",
                 },
             ],
+        }
+
+
+class IncompleteReportResearchAgentClient:
+    def analyze_research_run(self, payload: dict) -> dict:
+        return {
+            "status": "completed",
+            "model": "fake-agent",
+            "review_summary": "AI report omitted later observation labels.",
+            "final_report": "本次研究只讨论 N+1/N+3/N+5。",
+            "agent_decisions": [],
+        }
+
+
+class LongOnlyReportResearchAgentClient:
+    def analyze_research_run(self, payload: dict) -> dict:
+        return {
+            "status": "completed",
+            "model": "fake-agent",
+            "review_summary": "AI report only mentioned long observation labels.",
+            "final_report": "本次研究只讨论 N+15/N+30/N+60/N+90/N+180。",
+            "agent_decisions": [],
         }
 
 
@@ -154,10 +189,65 @@ def test_research_run_service_scores_strategies_and_writes_artifacts(tmp_path: P
 
     report_text = (run_dir / "aggregate" / "final_report.md").read_text()
     assert "本次研究流程完成" in report_text
+    assert "N+180" in report_text
 
     review_payload = json.loads((run_dir / "aggregate" / "ai_review.json").read_text())
     assert review_payload["status"] == "completed"
     assert review_payload["model"] == "fake-agent"
+
+
+def test_research_run_service_appends_deterministic_observation_coverage_when_ai_report_is_incomplete(
+    tmp_path: Path,
+) -> None:
+    service = ResearchRunService(
+        FakeResearchRunClient(),
+        artifact_root=tmp_path,
+        research_agent_client=IncompleteReportResearchAgentClient(),
+    )
+
+    result = service.run(
+        ResearchRunRequest(
+            stock_code="000001",
+            start_dates=["20260401"],
+            window_days=5,
+        )
+    )
+
+    run_dir = tmp_path / result.run_id
+    report_text = (run_dir / "aggregate" / "final_report.md").read_text()
+    assert "## 确定性观察点覆盖校验" in report_text
+    assert "N+1 / N+3 / N+5 / N+15 / N+30 / N+60 / N+90 / N+180" in report_text
+    assert "N+180=N/A" in report_text
+
+    review_payload = json.loads((run_dir / "aggregate" / "ai_review.json").read_text())
+    assert review_payload["report_validation"]["status"] == "corrected"
+    assert review_payload["report_validation"]["missing_observation_labels"] == [
+        "N+15",
+        "N+30",
+        "N+60",
+        "N+90",
+        "N+180",
+    ]
+
+
+def test_research_run_service_does_not_match_observation_labels_by_substring(tmp_path: Path) -> None:
+    service = ResearchRunService(
+        FakeResearchRunClient(),
+        artifact_root=tmp_path,
+        research_agent_client=LongOnlyReportResearchAgentClient(),
+    )
+
+    result = service.run(
+        ResearchRunRequest(
+            stock_code="000001",
+            start_dates=["20260401"],
+            window_days=5,
+        )
+    )
+
+    review_payload = json.loads((tmp_path / result.run_id / "aggregate" / "ai_review.json").read_text())
+    assert review_payload["report_validation"]["status"] == "corrected"
+    assert review_payload["report_validation"]["missing_observation_labels"] == ["N+1", "N+3", "N+5"]
 
 
 def test_research_run_service_records_skipped_ai_agent_when_unconfigured(tmp_path: Path) -> None:

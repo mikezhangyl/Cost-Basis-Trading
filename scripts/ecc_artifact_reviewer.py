@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -279,19 +280,28 @@ def collect_source_artifacts(run_dir: Path) -> dict[str, Any]:
         if not path.exists():
             raise FileNotFoundError(str(path))
 
+    api_call_log = run_dir / "api-calls.jsonl"
     backtest_scores = sorted(run_dir.glob("samples/*/backtest/backtest_score.json"))
     feature_sets = sorted(run_dir.glob("samples/*/features/feature_set.json"))
     signal_files = sorted(run_dir.glob("samples/*/signals/signal_*.json"))
+    stage_manifests = sorted(run_dir.glob("samples/*/*/manifest.json"))
+    decision_logs = sorted(run_dir.glob("samples/*/signals/agent_decision_log.jsonl"))
+    aggregate_decision_log = run_dir / "aggregate" / "agent-decisions.jsonl"
+    decision_log_paths = decision_logs + ([aggregate_decision_log] if aggregate_decision_log.exists() else [])
+    optional_paths = [path for path in [api_call_log] if path.exists()] + stage_manifests + decision_log_paths
     return {
         "run_config": _load_json(run_dir / "run-config.json"),
         "run_manifest": _load_json(run_dir / "run-manifest.json"),
         "final_report": (run_dir / "aggregate" / "final_report.md").read_text(encoding="utf-8"),
         "ai_review": _load_json(run_dir / "aggregate" / "ai_review.json"),
+        "api_calls": _load_jsonl(api_call_log) if api_call_log.exists() else [],
         "backtest_scores": [_load_json_with_path(path) for path in backtest_scores],
         "feature_sets": [_load_json_with_path(path) for path in feature_sets],
         "signal_files": [_load_json_with_path(path) for path in signal_files],
+        "stage_manifests": [_load_json_with_path(path) for path in stage_manifests],
+        "decision_logs": [_load_jsonl_with_path(path) for path in decision_log_paths],
         "paths": [str(path) for path in [run_dir / file for file in REQUIRED_RUN_FILES]]
-        + [str(path) for path in backtest_scores + feature_sets + signal_files],
+        + [str(path) for path in backtest_scores + feature_sets + signal_files + optional_paths],
     }
 
 
@@ -358,7 +368,11 @@ def _build_deterministic_findings(artifacts: dict[str, Any]) -> list[dict[str, A
         )
 
     report = str(artifacts.get("final_report", ""))
-    missing_mentions = [f"N+{offset}" for offset in EXPECTED_OBSERVATION_OFFSETS if f"N+{offset}" not in report]
+    missing_mentions = [
+        f"N+{offset}"
+        for offset in EXPECTED_OBSERVATION_OFFSETS
+        if not _contains_observation_label(report, f"N+{offset}")
+    ]
     if missing_mentions:
         findings.append(
             _finding(
@@ -586,6 +600,10 @@ def _finding(
     }
 
 
+def _contains_observation_label(text: str, label: str) -> bool:
+    return re.search(rf"(?<![A-Za-z0-9]){re.escape(label)}(?!\d)", text) is not None
+
+
 def _external_review_call_log(
     review_id: str,
     status: str,
@@ -625,6 +643,19 @@ def _load_json(path: Path) -> Any:
 
 def _load_json_with_path(path: Path) -> dict[str, Any]:
     return {"path": str(path), "content": _load_json(path)}
+
+
+def _load_jsonl(path: Path) -> list[Any]:
+    rows = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped:
+            rows.append(json.loads(stripped))
+    return rows
+
+
+def _load_jsonl_with_path(path: Path) -> dict[str, Any]:
+    return {"path": str(path), "content": _load_jsonl(path)}
 
 
 def _write_json(path: Path, payload: Any) -> None:

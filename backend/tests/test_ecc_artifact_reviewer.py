@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
-from scripts.ecc_artifact_reviewer import EccArtifactReviewer, StaticArtifactReviewClient
+from scripts.ecc_artifact_reviewer import EccArtifactReviewer, StaticArtifactReviewClient, collect_source_artifacts
 
 
 def test_ecc_artifact_reviewer_writes_run_local_artifacts(tmp_path: Path) -> None:
@@ -52,6 +52,18 @@ def test_ecc_artifact_reviewer_writes_run_local_artifacts(tmp_path: Path) -> Non
     quality_prompt = (review_dir / "quality-subagent-review-prompt.md").read_text()
     assert "You are the ECC Quality Sub-Agent for this repository." in quality_prompt
 
+    source_artifacts = json.loads((review_dir / "source-artifacts.json").read_text())
+    assert source_artifacts["api_calls"][0]["endpoint"] == "cyq_chips"
+    assert {manifest["content"]["stage"] for manifest in source_artifacts["stage_manifests"]} == {
+        "features",
+        "signals",
+        "backtest",
+    }
+    assert source_artifacts["decision_logs"][0]["content"][0]["agent"] == "strategy-agent"
+    assert any(path.endswith("api-calls.jsonl") for path in source_artifacts["paths"])
+    assert any(path.endswith("features/manifest.json") for path in source_artifacts["paths"])
+    assert any(path.endswith("signals/agent_decision_log.jsonl") for path in source_artifacts["paths"])
+
     fix_plan = (review_dir / "fix-plan-draft.md").read_text()
     assert "Approval required" in fix_plan
 
@@ -92,6 +104,45 @@ def test_ecc_artifact_reviewer_passes_when_artifacts_match_plan(tmp_path: Path) 
     assert result.findings_count == 0
     findings = json.loads((Path(result.artifact_dir) / "findings.json").read_text())
     assert findings["findings"] == []
+
+
+def test_ecc_artifact_reviewer_does_not_match_observation_labels_by_substring(tmp_path: Path) -> None:
+    research_root = tmp_path / "research-runs"
+    plan_root = tmp_path / "plans"
+    _write_plan_docs(plan_root)
+    _write_research_run(research_root, "run-test-1", complete_offsets=True, complete_report=True)
+    run_dir = research_root / "run-test-1"
+    (run_dir / "aggregate" / "final_report.md").write_text(
+        "This report discusses N+15 N+30 N+60 N+90 N+180.",
+        encoding="utf-8",
+    )
+    reviewer = EccArtifactReviewer(
+        research_run_root=research_root,
+        plan_doc_paths=[plan_root / "current-state.md", plan_root / "architecture.md"],
+    )
+
+    result = reviewer.review_run("run-test-1")
+
+    assert result.status == "needs_fix"
+    findings = json.loads((Path(result.artifact_dir) / "findings.json").read_text())
+    assert "N+1, N+3, N+5" in findings["findings"][0]["evidence"][0]
+
+
+def test_collect_source_artifacts_includes_traceability_evidence(tmp_path: Path) -> None:
+    research_root = tmp_path / "research-runs"
+    _write_research_run(research_root, "run-test-1", complete_offsets=True, complete_report=True)
+
+    artifacts = collect_source_artifacts(research_root / "run-test-1")
+
+    assert artifacts["api_calls"][0]["endpoint"] == "cyq_chips"
+    assert [call["row_count"] for call in artifacts["api_calls"]] == [30]
+    assert {manifest["content"]["stage"] for manifest in artifacts["stage_manifests"]} == {
+        "features",
+        "signals",
+        "backtest",
+    }
+    assert artifacts["decision_logs"][0]["content"][0]["decision_type"] == "rule_signal"
+    assert any(path.endswith("backtest/manifest.json") for path in artifacts["paths"])
 
 
 def test_ecc_artifact_reviewer_fails_when_report_is_missing(tmp_path: Path) -> None:
@@ -150,6 +201,18 @@ def _write_research_run(
         encoding="utf-8",
     )
     (run_dir / "run-manifest.json").write_text(json.dumps({"status": "completed"}), encoding="utf-8")
+    (run_dir / "api-calls.jsonl").write_text(
+        json.dumps(
+            {
+                "endpoint": "cyq_chips",
+                "params": {"ts_code": "000001.SZ"},
+                "status": "OK",
+                "row_count": 30,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     (aggregate_dir / "final_report.md").write_text(
         f"This report discusses {report_mentions}.",
         encoding="utf-8",
@@ -173,3 +236,47 @@ def _write_research_run(
     )
     (features_dir / "feature_set.json").write_text(json.dumps({"latest_close": 10.0}), encoding="utf-8")
     (signals_dir / "signal_composite_baseline.json").write_text(json.dumps({"action": "HOLD"}), encoding="utf-8")
+    (features_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "stage": "features",
+                "input_refs": ["api-calls.jsonl"],
+                "output_refs": ["samples/000001.SZ-20260301-N10/features/feature_set.json"],
+                "row_counts": {"price_bars": 10, "chip_points": 30},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (signals_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "stage": "signals",
+                "input_refs": ["samples/000001.SZ-20260301-N10/features/feature_set.json"],
+                "output_refs": ["samples/000001.SZ-20260301-N10/signals/signal_composite_baseline.json"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (signals_dir / "agent_decision_log.jsonl").write_text(
+        json.dumps(
+            {
+                "agent": "strategy-agent",
+                "decision_type": "rule_signal",
+                "strategy_id": "composite_baseline",
+                "action": "HOLD",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (backtest_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "stage": "backtest",
+                "input_refs": ["samples/000001.SZ-20260301-N10/signals/manifest.json"],
+                "output_refs": ["samples/000001.SZ-20260301-N10/backtest/backtest_score.json"],
+                "date_coverage": {"future_offsets": expected_offsets},
+            }
+        ),
+        encoding="utf-8",
+    )
