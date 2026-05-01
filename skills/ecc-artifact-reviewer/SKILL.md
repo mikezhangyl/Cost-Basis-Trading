@@ -12,21 +12,23 @@ Use this skill when a completed AI-agent research run needs development-time rev
 
 - `docs/research-runs/<run_id>/`
 - project plan and design docs
-- optional `DEEPSEEK_API_KEY` in `.env.local` or `env.local`
+- optional external reviewer credentials, such as `DEEPSEEK_API_KEY`, when explicitly requested
 
 ## Command
 
-Run deterministic checks only:
-
-```bash
-python scripts/ecc_artifact_reviewer.py --run-id <run_id> --no-llm
-```
-
-Run deterministic checks plus optional semantic LLM review:
+Prepare the local artifact review packet for the current Codex session:
 
 ```bash
 python scripts/ecc_artifact_reviewer.py --run-id <run_id>
 ```
+
+Optionally ask an external reviewer provider for a second opinion:
+
+```bash
+python scripts/ecc_artifact_reviewer.py --run-id <run_id> --external-reviewer deepseek
+```
+
+`--no-llm` remains as a deprecated alias for the default no-external-reviewer path.
 
 ## Output
 
@@ -41,16 +43,19 @@ docs/research-runs/<run_id>/ecc-artifact-reviews/
     plan-snapshot.json
     findings.json
     fix-plan-draft.md
+    codex-review-prompt.md
     artifact-review-report.md
     review-state.json
     workflow-events.jsonl
-    llm-calls.jsonl
+    external-review-calls.jsonl
 ```
 
 ## Rules
 
 - Do not expose this workflow as a product API.
 - Do not use LangGraph or LangSmith for this reviewer.
+- The current Codex session is the primary semantic reviewer.
+- External LLM reviewers are optional adapters, not the default reviewer.
 - Treat local artifacts as the source of truth.
 - Never apply fixes from `fix-plan-draft.md` until the user approves the plan.
-- The report must distinguish deterministic findings from LLM semantic review.
+- The report must distinguish deterministic findings, Codex semantic review, and optional external reviewer findings.

@@ -15,7 +15,6 @@ def test_ecc_artifact_reviewer_writes_run_local_artifacts(tmp_path: Path) -> Non
     reviewer = EccArtifactReviewer(
         research_run_root=research_root,
         plan_doc_paths=[plan_root / "current-state.md", plan_root / "architecture.md"],
-        review_client=StaticArtifactReviewClient("LLM artifact review completed."),
     )
 
     result = reviewer.review_run("run-test-1")
@@ -31,9 +30,10 @@ def test_ecc_artifact_reviewer_writes_run_local_artifacts(tmp_path: Path) -> Non
     assert (review_dir / "findings.json").exists()
     assert (review_dir / "fix-plan-draft.md").exists()
     assert (review_dir / "artifact-review-report.md").exists()
+    assert (review_dir / "codex-review-prompt.md").exists()
     assert (review_dir / "review-state.json").exists()
     assert (review_dir / "workflow-events.jsonl").exists()
-    assert (review_dir / "llm-calls.jsonl").exists()
+    assert (review_dir / "external-review-calls.jsonl").exists()
 
     latest = json.loads((research_root / "run-test-1" / "ecc-artifact-reviews" / "latest.json").read_text())
     assert latest["review_id"] == result.review_id
@@ -46,10 +46,34 @@ def test_ecc_artifact_reviewer_writes_run_local_artifacts(tmp_path: Path) -> Non
 
     report = (review_dir / "artifact-review-report.md").read_text()
     assert "# ECC Artifact Review Report" in report
-    assert "LLM artifact review completed." in report
+    assert "Codex Semantic Review" in report
+    assert "Pending current Codex review." in report
+
+    codex_prompt = (review_dir / "codex-review-prompt.md").read_text()
+    assert "You are the current Codex session acting as ECC Artifact Reviewer." in codex_prompt
 
     fix_plan = (review_dir / "fix-plan-draft.md").read_text()
     assert "Approval required" in fix_plan
+
+
+def test_ecc_artifact_reviewer_can_use_explicit_external_reviewer(tmp_path: Path) -> None:
+    research_root = tmp_path / "research-runs"
+    plan_root = tmp_path / "plans"
+    _write_plan_docs(plan_root)
+    _write_research_run(research_root, "run-test-1")
+    reviewer = EccArtifactReviewer(
+        research_run_root=research_root,
+        plan_doc_paths=[plan_root / "current-state.md", plan_root / "architecture.md"],
+        review_client=StaticArtifactReviewClient("External artifact review completed."),
+    )
+
+    result = reviewer.review_run("run-test-1")
+
+    report = (Path(result.artifact_dir) / "artifact-review-report.md").read_text()
+    assert "External Reviewer Findings" in report
+    assert "External artifact review completed." in report
+    call_log = (Path(result.artifact_dir) / "external-review-calls.jsonl").read_text()
+    assert '"status": "ok"' in call_log
 
 
 def test_ecc_artifact_reviewer_passes_when_artifacts_match_plan(tmp_path: Path) -> None:

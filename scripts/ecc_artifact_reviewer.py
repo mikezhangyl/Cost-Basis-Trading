@@ -72,7 +72,7 @@ class DeepSeekArtifactReviewClient:
         return cls(client)
 
     def review(self, payload: dict[str, Any]) -> dict[str, Any]:
-        prompt = _build_llm_prompt(payload)
+        prompt = _build_external_review_prompt(payload)
         response = self.client.chat.completions.create(
             model=self.model,
             messages=[
@@ -142,14 +142,27 @@ class EccArtifactReviewer:
             {"findings_count": len(deterministic_findings)},
         )
 
-        _append_event(events_path, review_id, "llm_artifact_review", "started")
-        llm_result = self._run_llm_review(review_dir, review_id, safe_run_id, plan_snapshot, source_artifacts, deterministic_findings)
-        llm_findings = list(llm_result.get("findings", []))
-        _append_event(events_path, review_id, "llm_artifact_review", "completed", {"findings_count": len(llm_findings)})
+        codex_prompt = _build_codex_review_prompt(review_id, safe_run_id, review_dir, deterministic_findings)
+        _write_text(review_dir / "codex-review-prompt.md", codex_prompt)
 
-        findings_payload = _findings_payload(review_id, safe_run_id, deterministic_findings, llm_findings)
+        _append_event(events_path, review_id, "external_artifact_review", "started")
+        external_result = self._run_external_review(
+            review_dir,
+            review_id,
+            safe_run_id,
+            plan_snapshot,
+            source_artifacts,
+            deterministic_findings,
+        )
+        external_findings = list(external_result.get("findings", []))
+        _append_event(events_path, review_id, "external_artifact_review", "completed", {"findings_count": len(external_findings)})
+
+        findings_payload = _findings_payload(review_id, safe_run_id, deterministic_findings, external_findings)
         _write_json(review_dir / "findings.json", findings_payload)
-        _write_text(review_dir / "artifact-review-report.md", _build_report(review_id, safe_run_id, deterministic_findings, str(llm_result.get("report", ""))))
+        _write_text(
+            review_dir / "artifact-review-report.md",
+            _build_report(review_id, safe_run_id, deterministic_findings, external_result),
+        )
         _write_text(review_dir / "fix-plan-draft.md", _build_fix_plan(review_id, safe_run_id, findings_payload["findings"]))
 
         status = "needs_fix" if findings_payload["findings"] else "passed"
@@ -168,6 +181,8 @@ class EccArtifactReviewer:
                 "review_id": review_id,
                 "run_id": safe_run_id,
                 "reviewer": "ECC Artifact Reviewer",
+                "primary_reviewer": "current_codex_session",
+                "external_reviewer": external_result.get("provider", "none"),
                 "storage": "run_local",
                 "research_run_dir": str(run_dir),
                 "artifact_dir": str(review_dir),
@@ -180,6 +195,9 @@ class EccArtifactReviewer:
                 "review_id": review_id,
                 "run_id": safe_run_id,
                 "status": status,
+                "primary_reviewer": "current_codex_session",
+                "codex_semantic_review": "pending",
+                "external_reviewer": external_result.get("provider", "none"),
                 "findings_count": result.findings_count,
                 "approval_required": result.approval_required,
             },
@@ -188,7 +206,7 @@ class EccArtifactReviewer:
         _append_event(events_path, review_id, "write_artifact_review", "completed", {"status": status})
         return result
 
-    def _run_llm_review(
+    def _run_external_review(
         self,
         review_dir: Path,
         review_id: str,
@@ -197,37 +215,46 @@ class EccArtifactReviewer:
         source_artifacts: dict[str, Any],
         deterministic_findings: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        payload = _build_llm_payload(review_id, run_id, plan_snapshot, source_artifacts, deterministic_findings)
-        call_log_path = review_dir / "llm-calls.jsonl"
+        payload = _build_external_review_payload(review_id, run_id, plan_snapshot, source_artifacts, deterministic_findings)
+        call_log_path = review_dir / "external-review-calls.jsonl"
         if self.review_client is None:
             result = {
-                "report": "LLM artifact review skipped because no reviewer client is configured.",
+                "provider": "none",
+                "report": "External artifact review was not requested. Current Codex session is the primary semantic reviewer.",
                 "findings": [],
-                "summary": "LLM artifact review skipped.",
+                "summary": "External artifact review not requested.",
             }
-            _append_jsonl(call_log_path, _llm_call_log(review_id, "skipped", payload, result))
+            _append_jsonl(call_log_path, _external_review_call_log(review_id, "not_requested", payload, result))
             return result
         started_at = perf_counter()
         try:
             result = self.review_client.review(payload)
+            result = {"provider": "external", **result}
         except Exception as error:
             result = {
-                "report": f"LLM artifact review failed: {error}",
+                "provider": "external",
+                "report": f"External artifact review failed: {error}",
                 "findings": [
                     {
                         "severity": "medium",
-                        "category": "llm_review_failure",
-                        "title": "LLM artifact review failed.",
+                        "category": "external_review_failure",
+                        "title": "External artifact review failed.",
                         "evidence": [str(error)],
-                        "expected": "LLM review should complete or fail into an auditable local artifact.",
-                        "suggested_fix": "Check reviewer API configuration and rerun ECC Artifact Reviewer.",
+                        "expected": "External reviewer should complete or fail into an auditable local artifact.",
+                        "suggested_fix": "Check external reviewer configuration or rerun with current Codex review only.",
                     }
                 ],
-                "summary": "LLM artifact review failed.",
+                "summary": "External artifact review failed.",
             }
-            _append_jsonl(call_log_path, _llm_call_log(review_id, "error", payload, result, int((perf_counter() - started_at) * 1000)))
+            _append_jsonl(
+                call_log_path,
+                _external_review_call_log(review_id, "error", payload, result, int((perf_counter() - started_at) * 1000)),
+            )
             return result
-        _append_jsonl(call_log_path, _llm_call_log(review_id, "ok", payload, result, int((perf_counter() - started_at) * 1000)))
+        _append_jsonl(
+            call_log_path,
+            _external_review_call_log(review_id, "ok", payload, result, int((perf_counter() - started_at) * 1000)),
+        )
         return result
 
 
@@ -279,9 +306,16 @@ def collect_plan_snapshot(plan_doc_paths: list[Path]) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run ECC Artifact Reviewer against a completed research run.")
     parser.add_argument("--run-id", required=True, help="Research run id under docs/research-runs.")
-    parser.add_argument("--no-llm", action="store_true", help="Skip optional DeepSeek semantic review.")
+    parser.add_argument(
+        "--external-reviewer",
+        choices=["none", "deepseek"],
+        default="none",
+        help="Optional external reviewer provider. Default keeps current Codex as the semantic reviewer.",
+    )
+    parser.add_argument("--no-llm", action="store_true", help="Deprecated alias for --external-reviewer none.")
     args = parser.parse_args()
-    client = None if args.no_llm else DeepSeekArtifactReviewClient.from_environment()
+    external_reviewer = "none" if args.no_llm else args.external_reviewer
+    client = DeepSeekArtifactReviewClient.from_environment() if external_reviewer == "deepseek" else None
     result = EccArtifactReviewer(review_client=client).review_run(args.run_id)
     print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
     return 0
@@ -301,9 +335,10 @@ def _build_artifact_refs(review_dir: Path) -> dict[str, str]:
         "report": str(review_dir / "artifact-review-report.md"),
         "findings": str(review_dir / "findings.json"),
         "fix_plan": str(review_dir / "fix-plan-draft.md"),
+        "codex_prompt": str(review_dir / "codex-review-prompt.md"),
         "state": str(review_dir / "review-state.json"),
         "events": str(review_dir / "workflow-events.jsonl"),
-        "llm_calls": str(review_dir / "llm-calls.jsonl"),
+        "external_calls": str(review_dir / "external-review-calls.jsonl"),
     }
 
 
@@ -356,7 +391,7 @@ def _build_deterministic_findings(artifacts: dict[str, Any]) -> list[dict[str, A
     return findings
 
 
-def _build_llm_payload(
+def _build_external_review_payload(
     review_id: str,
     run_id: str,
     plan_snapshot: dict[str, Any],
@@ -409,7 +444,7 @@ def _summarize_backtest_scores(backtest_scores: list[dict[str, Any]]) -> list[di
     return summaries
 
 
-def _build_llm_prompt(payload: dict[str, Any]) -> str:
+def _build_external_review_prompt(payload: dict[str, Any]) -> str:
     return (
         "请对以下 research run 产物做 ECC Artifact Review。\n"
         "目标：比较计划文档与实际 report/artifacts 是否一致。\n"
@@ -422,7 +457,47 @@ def _build_llm_prompt(payload: dict[str, Any]) -> str:
     )
 
 
-def _build_report(review_id: str, run_id: str, deterministic_findings: list[dict[str, Any]], llm_report: str) -> str:
+def _build_codex_review_prompt(
+    review_id: str,
+    run_id: str,
+    review_dir: Path,
+    deterministic_findings: list[dict[str, Any]],
+) -> str:
+    return "\n".join(
+        [
+            "# Codex ECC Artifact Review Prompt",
+            "",
+            "You are the current Codex session acting as ECC Artifact Reviewer.",
+            "",
+            "Review the generated research-run artifacts against the current project plan.",
+            "Do not provide investment advice. Focus on artifact correctness, traceability, plan alignment, scoring policy, N/A handling, and future-leak risk.",
+            "",
+            f"- Review ID: `{review_id}`",
+            f"- Research Run: `{run_id}`",
+            f"- Review Directory: `{review_dir}`",
+            f"- Deterministic Findings: `{len(deterministic_findings)}`",
+            "",
+            "Read these local files before writing conclusions:",
+            "",
+            f"- `{review_dir / 'plan-snapshot.json'}`",
+            f"- `{review_dir / 'source-artifacts.json'}`",
+            f"- `{review_dir / 'findings.json'}`",
+            f"- `{review_dir / 'artifact-review-report.md'}`",
+            f"- `{review_dir / 'fix-plan-draft.md'}`",
+            "",
+            "After review, update `artifact-review-report.md`, `findings.json`, `fix-plan-draft.md`, and `review-state.json` if you find additional issues.",
+            "Do not apply fixes until the user approves the fix plan.",
+            "",
+        ]
+    )
+
+
+def _build_report(
+    review_id: str,
+    run_id: str,
+    deterministic_findings: list[dict[str, Any]],
+    external_result: dict[str, Any],
+) -> str:
     status = "needs_fix" if deterministic_findings else "passed"
     lines = [
         "# ECC Artifact Review Report",
@@ -439,7 +514,19 @@ def _build_report(review_id: str, run_id: str, deterministic_findings: list[dict
             lines.append(f"- **{finding['severity']}** `{finding['category']}`: {finding['title']}")
     else:
         lines.append("- No deterministic findings.")
-    lines.extend(["", "## LLM Review", "", llm_report.strip() or "LLM review did not return content.", ""])
+    lines.extend(
+        [
+            "",
+            "## Codex Semantic Review",
+            "",
+            "Pending current Codex review. Use `codex-review-prompt.md` as the local review packet.",
+            "",
+            "## External Reviewer Findings",
+            "",
+            str(external_result.get("report", "")).strip() or "External artifact review was not requested.",
+            "",
+        ]
+    )
     return "\n".join(lines)
 
 
@@ -469,9 +556,9 @@ def _findings_payload(
     review_id: str,
     run_id: str,
     deterministic_findings: list[dict[str, Any]],
-    llm_findings: list[dict[str, Any]],
+    external_findings: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    findings = deterministic_findings + llm_findings
+    findings = deterministic_findings + external_findings
     return {
         "review_id": review_id,
         "run_id": run_id,
@@ -498,7 +585,7 @@ def _finding(
     }
 
 
-def _llm_call_log(
+def _external_review_call_log(
     review_id: str,
     status: str,
     payload: dict[str, Any],
