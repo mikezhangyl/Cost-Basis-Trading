@@ -6,7 +6,7 @@ import pytest
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
-from scripts.chip_factor_evaluator import evaluate_factor_run
+from scripts.chip_factor_evaluator import _build_report, evaluate_factor_run
 
 
 def test_chip_factor_evaluator_aligns_factors_to_forward_returns(tmp_path: Path) -> None:
@@ -38,6 +38,30 @@ def test_chip_factor_evaluator_refuses_to_overwrite_existing_evaluation(tmp_path
 
     with pytest.raises(SystemExit, match="immutable"):
         evaluate_factor_run(run_dir, offsets=[1], evaluation_id="factor-eval-test")
+
+
+def test_chip_factor_evaluator_report_handles_tied_correlations() -> None:
+    report = _build_report(
+        {
+            "factor_run_id": "factor-run-test",
+            "evaluation_id": "factor-eval-test",
+            "offsets": [1],
+            "observation_count": 2,
+            "summary_by_factor": [
+                {
+                    "factor_id": "factor_a",
+                    "offsets": [{"offset_days": 1, "pearson_correlation": 0.5, "top_minus_bottom_return": 0.01, "available_count": 5}],
+                },
+                {
+                    "factor_id": "factor_b",
+                    "offsets": [{"offset_days": 1, "pearson_correlation": 0.5, "top_minus_bottom_return": 0.02, "available_count": 5}],
+                },
+            ],
+        }
+    )
+
+    assert "factor_a" in report
+    assert "factor_b" in report
 
 
 def _write_factor_run(run_dir: Path) -> Path:

@@ -23,6 +23,7 @@ coverage/
 *.sqlite3
 *.db
 data/factor-cache/
+docs/factor-batches/
 docs/factor-runs/
 
 docs/*reviews/

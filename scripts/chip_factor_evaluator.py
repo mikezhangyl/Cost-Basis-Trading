@@ -220,7 +220,7 @@ def _build_report(summary: dict[str, Any]) -> str:
             correlation = offset_summary.get("pearson_correlation")
             if correlation is not None:
                 ranked.append((abs(correlation), factor_summary["factor_id"], offset_summary))
-    for _, factor_id, offset_summary in sorted(ranked, reverse=True)[:10]:
+    for _, factor_id, offset_summary in sorted(ranked, key=lambda item: item[0], reverse=True)[:10]:
         lines.append(
             "- "
             f"`{factor_id}` N+{offset_summary['offset_days']}: "
