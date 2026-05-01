@@ -13,7 +13,7 @@ In scope:
 - review completed `docs/research-runs/<run_id>/` artifacts,
 - compare run artifacts with project plans and design docs,
 - run deterministic checks for required observation offsets and report coverage,
-- prepare a local Codex review packet for the current Codex session,
+- prepare a local review packet for the ECC Quality Sub-Agent,
 - optionally call an external reviewer provider directly through the project-local script,
 - write all review inputs, judgments, optional external-review call summaries, findings, and fix plans locally.
 
@@ -28,18 +28,20 @@ Out of scope:
 ## Workflow
 
 ```text
-Codex / ECC operator
-  -> python scripts/ecc_artifact_reviewer.py --run-id <run_id>
-  -> load plan docs
-  -> load research-run artifacts
-  -> deterministic artifact checks
-  -> write Codex review packet
-  -> current Codex session performs semantic artifact review
-  -> optional external reviewer second opinion
-  -> update ECC artifact review report
-  -> write fix-plan draft
-  -> wait for user approval before code changes
+Parent Codex / ECC orchestrator
+  -> spawns ECC Quality Sub-Agent for verification
+  -> sub-agent runs python scripts/ecc_artifact_reviewer.py --run-id <run_id>
+  -> sub-agent loads plan docs and research-run artifacts
+  -> sub-agent runs deterministic artifact checks
+  -> sub-agent reads the review packet
+  -> sub-agent performs semantic artifact review
+  -> sub-agent optionally asks an external reviewer for a second opinion
+  -> sub-agent updates ECC artifact review report and fix-plan draft
+  -> parent Codex reads outputs
+  -> parent waits for user approval before code changes
 ```
+
+The ECC Quality Sub-Agent is not authorized to fix code or product behavior. It may only run verification, write evidence, update review artifacts, and draft a fix plan. Any implementation work must wait for user approval and then be performed by the parent Codex or a separately delegated implementation agent.
 
 ## Runtime Artifacts
 
@@ -64,7 +66,7 @@ The review lives beside the run it reviews so a single run directory remains tra
 
 ## Commands
 
-Prepare a review packet for the current Codex session:
+Prepare a review packet. Run this inside the ECC Quality Sub-Agent when sub-agents are available:
 
 ```bash
 python scripts/ecc_artifact_reviewer.py --run-id <run_id>
@@ -83,12 +85,15 @@ The default path does not call an external LLM. `--no-llm` remains as a deprecat
 - Product backend does not import or trigger ECC Artifact Reviewer.
 - No product API exists for ECC Artifact Reviewer.
 - Backend dependencies do not include LangGraph or LangSmith.
+- Verification execution is delegated to an ECC Quality Sub-Agent when the runtime supports sub-agents.
 - Reviewer artifacts are stored under `docs/research-runs/<run_id>/ecc-artifact-reviews/`.
 - `latest.json` points to the latest review for the run.
 - Review execution logs local events and optional external-review call summaries.
 - Fix plans clearly state whether approval is required.
 
 ## Verification
+
+Run these verification commands inside the ECC Quality Sub-Agent when sub-agents are available. Parent Codex should remain the orchestrator and approval gate.
 
 ```bash
 pytest -v
