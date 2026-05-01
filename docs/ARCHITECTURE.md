@@ -79,6 +79,12 @@ Use a stable response envelope:
 
 Per-stock errors belong in `results[]` so one bad symbol does not fail the whole scan.
 
+Tushare client resilience:
+
+- Tushare requests use bounded retries for transient `NETWORK_ERROR` and `RATE_LIMITED` failures.
+- Permission and entitlement failures are not retried.
+- Retry exhaustion keeps the final attempt number in the error message so `api-calls.jsonl` can show where the external service failed.
+
 Backtest endpoint:
 
 - `POST /api/backtests`

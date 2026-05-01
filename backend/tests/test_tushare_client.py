@@ -1,6 +1,7 @@
 import pandas as pd
 
 from app.data.tushare_client import TushareMarketDataClient
+from app.domain.errors import DataErrorCode, DataUnavailableError
 
 
 class FakePro:
@@ -30,6 +31,8 @@ class FakeTushareClient(TushareMarketDataClient):
     def __init__(self, fake_pro: FakePro) -> None:
         self.token = "test-token"
         self._pro = fake_pro
+        self.max_retries = 3
+        self.retry_sleep_seconds = 0
 
 
 def test_chip_distribution_queries_each_trading_day_to_avoid_row_limit() -> None:
@@ -42,3 +45,107 @@ def test_chip_distribution_queries_each_trading_day_to_avoid_row_limit() -> None
     assert [call["trade_date"] for call in fake_pro.cyq_calls] == ["20260415", "20260416", "20260417"]
     assert all("start_date" not in call for call in fake_pro.cyq_calls)
     assert all("end_date" not in call for call in fake_pro.cyq_calls)
+
+
+class TransientCyqPro(FakePro):
+    def __init__(self) -> None:
+        super().__init__()
+        self.failures_remaining = 1
+
+    def cyq_chips(self, **kwargs):
+        self.cyq_calls.append(kwargs)
+        if kwargs["trade_date"] == "20260416" and self.failures_remaining > 0:
+            self.failures_remaining -= 1
+            raise RuntimeError("temporary gateway timeout")
+        return pd.DataFrame(
+            {
+                "ts_code": [kwargs["ts_code"]],
+                "trade_date": [kwargs["trade_date"]],
+                "price": [10.0],
+                "percent": [1.0],
+            }
+        )
+
+
+class PermissionCyqPro(FakePro):
+    def cyq_chips(self, **kwargs):
+        self.cyq_calls.append(kwargs)
+        raise RuntimeError("权限不足")
+
+
+class ChineseRateLimitCyqPro(FakePro):
+    def __init__(self) -> None:
+        super().__init__()
+        self.failures_remaining = 1
+
+    def cyq_chips(self, **kwargs):
+        self.cyq_calls.append(kwargs)
+        if self.failures_remaining > 0:
+            self.failures_remaining -= 1
+            raise RuntimeError("接口调用频次超过限制，积分越多频次越高")
+        return pd.DataFrame(
+            {
+                "ts_code": [kwargs["ts_code"]],
+                "trade_date": [kwargs["trade_date"]],
+                "price": [10.0],
+                "percent": [1.0],
+            }
+        )
+
+
+class ExhaustedNetworkCyqPro(FakePro):
+    def cyq_chips(self, **kwargs):
+        self.cyq_calls.append(kwargs)
+        raise RuntimeError("temporary gateway timeout")
+
+
+def test_chip_distribution_retries_transient_tushare_failures() -> None:
+    fake_pro = TransientCyqPro()
+    client = FakeTushareClient(fake_pro)
+
+    rows = client.get_chip_distribution("600519.SH", "20260415", "20260417")
+
+    assert len(rows) == 3
+    assert [call["trade_date"] for call in fake_pro.cyq_calls] == [
+        "20260415",
+        "20260416",
+        "20260416",
+        "20260417",
+    ]
+
+
+def test_chip_distribution_does_not_retry_permission_errors() -> None:
+    fake_pro = PermissionCyqPro()
+    client = FakeTushareClient(fake_pro)
+
+    try:
+        client.get_chip_distribution("600519.SH", "20260415", "20260417")
+    except DataUnavailableError as error:
+        assert error.code == DataErrorCode.NO_PERMISSION
+    else:
+        raise AssertionError("Expected permission errors to fail without retry.")
+    assert len(fake_pro.cyq_calls) == 1
+
+
+def test_chip_distribution_retries_chinese_rate_limit_messages_before_permission_matching() -> None:
+    fake_pro = ChineseRateLimitCyqPro()
+    client = FakeTushareClient(fake_pro)
+
+    rows = client.get_chip_distribution("600519.SH", "20260415", "20260415")
+
+    assert len(rows) == 3
+    assert len(fake_pro.cyq_calls) == 4
+
+
+def test_chip_distribution_reports_final_attempt_when_retries_are_exhausted() -> None:
+    fake_pro = ExhaustedNetworkCyqPro()
+    client = FakeTushareClient(fake_pro)
+
+    try:
+        client.get_chip_distribution("600519.SH", "20260415", "20260415")
+    except DataUnavailableError as error:
+        assert error.code == DataErrorCode.NETWORK_ERROR
+        assert "attempt=3/3" in error.message
+    else:
+        raise AssertionError("Expected exhausted transient failures to raise.")
+    assert len(fake_pro.cyq_calls) == 3
