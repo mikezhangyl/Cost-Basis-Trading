@@ -30,7 +30,7 @@ def test_ecc_artifact_reviewer_writes_run_local_artifacts(tmp_path: Path) -> Non
     assert (review_dir / "findings.json").exists()
     assert (review_dir / "fix-plan-draft.md").exists()
     assert (review_dir / "artifact-review-report.md").exists()
-    assert (review_dir / "codex-review-prompt.md").exists()
+    assert (review_dir / "quality-subagent-review-prompt.md").exists()
     assert (review_dir / "review-state.json").exists()
     assert (review_dir / "workflow-events.jsonl").exists()
     assert (review_dir / "external-review-calls.jsonl").exists()
@@ -46,11 +46,11 @@ def test_ecc_artifact_reviewer_writes_run_local_artifacts(tmp_path: Path) -> Non
 
     report = (review_dir / "artifact-review-report.md").read_text()
     assert "# ECC Artifact Review Report" in report
-    assert "Codex Semantic Review" in report
-    assert "Pending current Codex review." in report
+    assert "ECC Quality Sub-Agent Semantic Review" in report
+    assert "Pending ECC Quality Sub-Agent review." in report
 
-    codex_prompt = (review_dir / "codex-review-prompt.md").read_text()
-    assert "You are the current Codex session acting as ECC Artifact Reviewer." in codex_prompt
+    quality_prompt = (review_dir / "quality-subagent-review-prompt.md").read_text()
+    assert "You are the ECC Quality Sub-Agent for this repository." in quality_prompt
 
     fix_plan = (review_dir / "fix-plan-draft.md").read_text()
     assert "Approval required" in fix_plan

@@ -142,8 +142,8 @@ class EccArtifactReviewer:
             {"findings_count": len(deterministic_findings)},
         )
 
-        codex_prompt = _build_codex_review_prompt(review_id, safe_run_id, review_dir, deterministic_findings)
-        _write_text(review_dir / "codex-review-prompt.md", codex_prompt)
+        quality_prompt = _build_quality_subagent_review_prompt(review_id, safe_run_id, review_dir, deterministic_findings)
+        _write_text(review_dir / "quality-subagent-review-prompt.md", quality_prompt)
 
         _append_event(events_path, review_id, "external_artifact_review", "started")
         external_result = self._run_external_review(
@@ -181,7 +181,7 @@ class EccArtifactReviewer:
                 "review_id": review_id,
                 "run_id": safe_run_id,
                 "reviewer": "ECC Artifact Reviewer",
-                "primary_reviewer": "current_codex_session",
+                "primary_reviewer": "ecc_quality_subagent",
                 "external_reviewer": external_result.get("provider", "none"),
                 "storage": "run_local",
                 "research_run_dir": str(run_dir),
@@ -195,8 +195,8 @@ class EccArtifactReviewer:
                 "review_id": review_id,
                 "run_id": safe_run_id,
                 "status": status,
-                "primary_reviewer": "current_codex_session",
-                "codex_semantic_review": "pending",
+                "primary_reviewer": "ecc_quality_subagent",
+                "quality_subagent_semantic_review": "pending",
                 "external_reviewer": external_result.get("provider", "none"),
                 "findings_count": result.findings_count,
                 "approval_required": result.approval_required,
@@ -241,7 +241,7 @@ class EccArtifactReviewer:
                         "title": "External artifact review failed.",
                         "evidence": [str(error)],
                         "expected": "External reviewer should complete or fail into an auditable local artifact.",
-                        "suggested_fix": "Check external reviewer configuration or rerun with current Codex review only.",
+                "suggested_fix": "Check external reviewer configuration or rerun with ECC Quality Sub-Agent review only.",
                     }
                 ],
                 "summary": "External artifact review failed.",
@@ -310,7 +310,7 @@ def main() -> int:
         "--external-reviewer",
         choices=["none", "deepseek"],
         default="none",
-        help="Optional external reviewer provider. Default keeps current Codex as the semantic reviewer.",
+        help="Optional external reviewer provider. Default prepares review for ECC Quality Sub-Agent.",
     )
     parser.add_argument("--no-llm", action="store_true", help="Deprecated alias for --external-reviewer none.")
     args = parser.parse_args()
@@ -335,7 +335,7 @@ def _build_artifact_refs(review_dir: Path) -> dict[str, str]:
         "report": str(review_dir / "artifact-review-report.md"),
         "findings": str(review_dir / "findings.json"),
         "fix_plan": str(review_dir / "fix-plan-draft.md"),
-        "codex_prompt": str(review_dir / "codex-review-prompt.md"),
+        "quality_subagent_prompt": str(review_dir / "quality-subagent-review-prompt.md"),
         "state": str(review_dir / "review-state.json"),
         "events": str(review_dir / "workflow-events.jsonl"),
         "external_calls": str(review_dir / "external-review-calls.jsonl"),
@@ -457,7 +457,7 @@ def _build_external_review_prompt(payload: dict[str, Any]) -> str:
     )
 
 
-def _build_codex_review_prompt(
+def _build_quality_subagent_review_prompt(
     review_id: str,
     run_id: str,
     review_dir: Path,
@@ -465,12 +465,13 @@ def _build_codex_review_prompt(
 ) -> str:
     return "\n".join(
         [
-            "# Codex ECC Artifact Review Prompt",
+            "# ECC Quality Sub-Agent Artifact Review Prompt",
             "",
-            "You are the current Codex session acting as ECC Artifact Reviewer.",
+            "You are the ECC Quality Sub-Agent for this repository.",
             "",
             "Review the generated research-run artifacts against the current project plan.",
             "Do not provide investment advice. Focus on artifact correctness, traceability, plan alignment, scoring policy, N/A handling, and future-leak risk.",
+            "Do not modify product code or apply fixes. You may only update review artifacts and draft a fix plan.",
             "",
             f"- Review ID: `{review_id}`",
             f"- Research Run: `{run_id}`",
@@ -486,7 +487,7 @@ def _build_codex_review_prompt(
             f"- `{review_dir / 'fix-plan-draft.md'}`",
             "",
             "After review, update `artifact-review-report.md`, `findings.json`, `fix-plan-draft.md`, and `review-state.json` if you find additional issues.",
-            "Do not apply fixes until the user approves the fix plan.",
+            "Do not apply fixes. Parent Codex must ask the user for approval before implementation.",
             "",
         ]
     )
@@ -517,9 +518,9 @@ def _build_report(
     lines.extend(
         [
             "",
-            "## Codex Semantic Review",
+            "## ECC Quality Sub-Agent Semantic Review",
             "",
-            "Pending current Codex review. Use `codex-review-prompt.md` as the local review packet.",
+            "Pending ECC Quality Sub-Agent review. Use `quality-subagent-review-prompt.md` as the local review packet.",
             "",
             "## External Reviewer Findings",
             "",

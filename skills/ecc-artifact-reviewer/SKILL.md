@@ -43,7 +43,7 @@ docs/research-runs/<run_id>/ecc-artifact-reviews/
     plan-snapshot.json
     findings.json
     fix-plan-draft.md
-    codex-review-prompt.md
+    quality-subagent-review-prompt.md
     artifact-review-report.md
     review-state.json
     workflow-events.jsonl
@@ -80,7 +80,7 @@ ECC Quality Sub-Agent responsibilities:
 - run deterministic tests requested by the parent,
 - run E2E or research smoke workflows requested by the parent,
 - run ECC Artifact Reviewer,
-- perform semantic artifact review from `codex-review-prompt.md`,
+- perform semantic artifact review from `quality-subagent-review-prompt.md`,
 - update `findings.json`, `artifact-review-report.md`, `fix-plan-draft.md`, and `review-state.json`,
 - report skipped checks and residual risks,
 - never apply fixes.
@@ -100,7 +100,7 @@ Tasks:
 1. Run the specified test commands.
 2. If a research run is requested, execute it or inspect the provided run id.
 3. Run ECC Artifact Reviewer for the provided artifact.
-4. Read codex-review-prompt.md and source artifacts.
+4. Read quality-subagent-review-prompt.md and source artifacts.
 5. Update findings.json, artifact-review-report.md, fix-plan-draft.md, and review-state.json.
 6. Return a concise summary with status, findings, skipped checks, and artifact paths.
 

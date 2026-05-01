@@ -55,7 +55,7 @@ docs/research-runs/<run_id>/
       plan-snapshot.json
       findings.json
       fix-plan-draft.md
-      codex-review-prompt.md
+      quality-subagent-review-prompt.md
       artifact-review-report.md
       review-state.json
       workflow-events.jsonl

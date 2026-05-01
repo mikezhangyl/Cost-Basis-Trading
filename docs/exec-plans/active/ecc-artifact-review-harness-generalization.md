@@ -126,7 +126,7 @@ Template:
   ],
 
   // Human-readable criteria for ECC Quality Sub-Agent semantic review.
-  // These become part of codex-review-prompt.md or a future quality-agent prompt.
+  // These become part of quality-subagent-review-prompt.md.
   "semantic_criteria": [
     "Does the artifact answer the task it claims to answer?",
     "Does the artifact cite or reference the relevant source artifacts?",
@@ -201,7 +201,7 @@ The harness should write review output inside the artifact directory by default:
       source-artifacts.json
       findings.json
       assertions.json
-      codex-review-prompt.md
+      quality-subagent-review-prompt.md
       artifact-review-report.md
       fix-plan-draft.md
       review-state.json
