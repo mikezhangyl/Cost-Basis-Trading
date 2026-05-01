@@ -297,6 +297,33 @@ class ResearchRunResponse(BaseModel):
         )
 
 
+class InDevReviewRequest(BaseModel):
+    run_id: str = Field(min_length=1, max_length=80)
+
+    @field_validator("run_id")
+    @classmethod
+    def validate_run_id(cls, value: str) -> str:
+        cleaned = value.strip()
+        if "/" in cleaned or "\\" in cleaned or ".." in cleaned:
+            raise ValueError("run_id must be a simple directory name.")
+        return cleaned
+
+
+class InDevReviewApprovalRequest(BaseModel):
+    approved: bool
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class InDevReviewResponse(BaseModel):
+    review_id: str
+    run_id: str
+    status: Literal["awaiting_approval", "approved", "rejected", "failed"]
+    artifact_dir: str
+    findings_count: int
+    approval_required: bool
+    artifact_refs: dict[str, str]
+
+
 class ApiEnvelope(BaseModel):
     success: bool
     data: object | None = None

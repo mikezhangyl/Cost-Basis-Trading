@@ -88,6 +88,22 @@ export type ResearchRunResponse = {
       report: string
     }
   }
+  in_dev_review?: {
+    review_id?: string
+    run_id?: string
+    status: "awaiting_approval" | "approved" | "rejected" | "failed"
+    artifact_dir?: string
+    findings_count?: number
+    approval_required?: boolean
+    artifact_refs?: {
+      report: string
+      findings: string
+      fix_plan: string
+      graph_state: string
+      events: string
+    }
+    error?: string
+  }
   aggregate_scores: Array<{
     strategy_id: string
     sample_count: number

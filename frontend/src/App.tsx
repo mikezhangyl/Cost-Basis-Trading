@@ -431,6 +431,29 @@ function ResearchRunView({ researchRun }: { researchRun: ResearchRunResponse }) 
             <ContextItem label="Report" value={researchRun.ai_review.artifact_refs.report} />
           </div>
         </section>
+        {researchRun.in_dev_review ? (
+          <section className="ai-review-panel" aria-label="In-dev reviewer">
+            <div>
+              <h4>In-dev reviewer</h4>
+              <p className="muted-text">
+                {researchRun.in_dev_review.status}
+                {typeof researchRun.in_dev_review.findings_count === "number"
+                  ? ` / ${researchRun.in_dev_review.findings_count} findings`
+                  : ""}
+              </p>
+            </div>
+            {researchRun.in_dev_review.error ? (
+              <p className="reason-callout">{researchRun.in_dev_review.error}</p>
+            ) : null}
+            {researchRun.in_dev_review.artifact_refs ? (
+              <div className="artifact-grid">
+                <ContextItem label="Report" value={researchRun.in_dev_review.artifact_refs.report} />
+                <ContextItem label="Findings" value={researchRun.in_dev_review.artifact_refs.findings} />
+                <ContextItem label="Fix plan" value={researchRun.in_dev_review.artifact_refs.fix_plan} />
+              </div>
+            ) : null}
+          </section>
+        ) : null}
         <p className="muted-text">
           回测口径：BUY 后续收益为正记为匹配，SELL 后续收益为负记为匹配；HOLD 不表达方向性，因此观察结果记为中性，
           方向分使用后续涨跌幅绝对值的负数作为机会成本/波动惩罚。
