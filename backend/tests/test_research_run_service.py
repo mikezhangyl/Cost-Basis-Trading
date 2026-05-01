@@ -65,6 +65,46 @@ class FakeResearchRunClient:
         ]
 
 
+class RetryEventResearchRunClient(FakeResearchRunClient):
+    def __init__(self) -> None:
+        self.retry_event_handler = None
+
+    def set_retry_event_handler(self, handler: object) -> None:
+        self.retry_event_handler = handler
+
+    def get_chip_distribution(self, ts_code: str, start_date: str, end_date: str) -> list[ChipDistributionPoint]:
+        if self.retry_event_handler is not None:
+            self.retry_event_handler(
+                {
+                    "endpoint": "cyq_chips",
+                    "params": {"ts_code": ts_code, "trade_date": start_date},
+                    "attempt": 1,
+                    "max_retries": 3,
+                    "error_code": "NETWORK_ERROR",
+                    "error_message": "Tushare request failed. endpoint=cyq_chips attempt=1/3",
+                    "raw_error_message": "temporary gateway timeout",
+                    "retryable": True,
+                    "sleep_seconds": 0.5,
+                    "status": "retrying",
+                }
+            )
+            self.retry_event_handler(
+                {
+                    "endpoint": "cyq_chips",
+                    "params": {"ts_code": ts_code, "trade_date": start_date},
+                    "attempt": 2,
+                    "max_retries": 3,
+                    "error_code": None,
+                    "error_message": None,
+                    "raw_error_message": None,
+                    "retryable": False,
+                    "sleep_seconds": 0,
+                    "status": "succeeded_after_retry",
+                }
+            )
+        return super().get_chip_distribution(ts_code, start_date, end_date)
+
+
 class FakeResearchAgentClient:
     def analyze_research_run(self, payload: dict) -> dict:
         observation_labels = ["N+1", "N+3", "N+5", "N+15", "N+30", "N+60", "N+90", "N+180"]
@@ -169,6 +209,7 @@ def test_research_run_service_scores_strategies_and_writes_artifacts(tmp_path: P
     assert (run_dir / "run-config.json").exists()
     assert (run_dir / "run-manifest.json").exists()
     assert (run_dir / "api-calls.jsonl").exists()
+    assert (run_dir / "api-retry-events.jsonl").exists()
     assert (run_dir / "aggregate" / "agent-decisions.jsonl").exists()
     assert (run_dir / "aggregate" / "final_report.md").exists()
 
@@ -197,6 +238,52 @@ def test_research_run_service_scores_strategies_and_writes_artifacts(tmp_path: P
     review_payload = json.loads((run_dir / "aggregate" / "ai_review.json").read_text())
     assert review_payload["status"] == "completed"
     assert review_payload["model"] == "fake-agent"
+
+
+def test_research_run_service_writes_api_retry_events(tmp_path: Path) -> None:
+    market_data_client = RetryEventResearchRunClient()
+    service = ResearchRunService(
+        market_data_client,
+        artifact_root=tmp_path,
+        research_agent_client=FakeResearchAgentClient(),
+    )
+
+    result = service.run(
+        ResearchRunRequest(
+            stock_code="000001",
+            start_dates=["20260401", "20260408"],
+            window_days=5,
+        )
+    )
+
+    run_dir = tmp_path / result.run_id
+    retry_events = [
+        json.loads(line)
+        for line in (run_dir / "api-retry-events.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    assert retry_events[0]["run_id"] == result.run_id
+    assert retry_events[0]["sample_id"] == result.samples[0].sample_id
+    assert retry_events[0]["endpoint"] == "cyq_chips"
+    assert retry_events[0]["attempt"] == 1
+    assert retry_events[0]["max_retries"] == 3
+    assert retry_events[0]["status"] == "retrying"
+    assert retry_events[0]["raw_error_message"] == "temporary gateway timeout"
+    assert retry_events[1]["status"] == "succeeded_after_retry"
+
+    manifest = json.loads((run_dir / "run-manifest.json").read_text())
+    assert "api-retry-events.jsonl" in manifest["output_refs"]
+    assert manifest["api_retry_summary"] == {
+        "retry_event_count": 2,
+        "total_retry_event_count": 4,
+        "retried_endpoint_count": 1,
+        "retried_endpoints": ["cyq_chips"],
+        "succeeded_after_retry_count": 2,
+        "final_failure_count": 0,
+        "had_retry": True,
+    }
+    assert manifest["logged_market_data_call_count"] > 0
+    assert market_data_client.retry_event_handler is None
 
 
 def test_research_run_service_appends_deterministic_observation_coverage_when_ai_report_is_incomplete(

@@ -61,6 +61,8 @@ class ResearchRunService:
         run_dir = self.artifact_root / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
         api_call_log = run_dir / "api-calls.jsonl"
+        api_retry_log = run_dir / "api-retry-events.jsonl"
+        api_retry_log.touch()
 
         _write_json(
             run_dir / "run-config.json",
@@ -77,7 +79,7 @@ class ResearchRunService:
         )
 
         samples = [
-            self._run_sample(run_id, run_dir, api_call_log, ts_code, start_date, request)
+            self._run_sample(run_id, run_dir, api_call_log, api_retry_log, ts_code, start_date, request)
             for start_date in request.start_dates
         ]
         aggregate_scores = _aggregate_scores(samples)
@@ -102,7 +104,9 @@ class ResearchRunService:
                 "status": "completed",
                 "created_at": _now_iso(),
                 "sample_count": len(samples),
-                "output_refs": ["run-config.json", "api-calls.jsonl", "run-manifest.json"],
+                "output_refs": ["run-config.json", "api-calls.jsonl", "api-retry-events.jsonl", "run-manifest.json"],
+                "logged_market_data_call_count": _count_jsonl_rows(api_call_log),
+                "api_retry_summary": _summarize_api_retries(api_retry_log),
                 "aggregate_scores": [score.model_dump(mode="json") for score in aggregate_scores],
                 "ai_review_status": ai_review["status"],
             },
@@ -165,16 +169,20 @@ class ResearchRunService:
         run_id: str,
         run_dir: Path,
         api_call_log: Path,
+        api_retry_log: Path,
         ts_code: str,
         start_date: str,
         request: ResearchRunRequest,
     ) -> ResearchSampleResult:
         sample_id = f"{ts_code}-{start_date}-N{request.window_days}"
         sample_dir = run_dir / "samples" / sample_id
-        logging_client = LoggingMarketDataClient(self.market_data_client, api_call_log, run_id, sample_id)
-        backtest = BacktestService(logging_client).run(
-            BacktestRequest(stock_code=ts_code, start_date=start_date, window_days=request.window_days)
-        )
+        logging_client = LoggingMarketDataClient(self.market_data_client, api_call_log, api_retry_log, run_id, sample_id)
+        try:
+            backtest = BacktestService(logging_client).run(
+                BacktestRequest(stock_code=ts_code, start_date=start_date, window_days=request.window_days)
+            )
+        finally:
+            logging_client.close()
 
         feature_set = _build_feature_set(backtest)
         feature_dir = sample_dir / "features"
@@ -277,11 +285,28 @@ class ResearchRunService:
 
 
 class LoggingMarketDataClient:
-    def __init__(self, wrapped: BacktestMarketDataClient, api_call_log: Path, run_id: str, sample_id: str) -> None:
+    def __init__(
+        self,
+        wrapped: BacktestMarketDataClient,
+        api_call_log: Path,
+        api_retry_log: Path,
+        run_id: str,
+        sample_id: str,
+    ) -> None:
         self.wrapped = wrapped
         self.api_call_log = api_call_log
+        self.api_retry_log = api_retry_log
         self.run_id = run_id
         self.sample_id = sample_id
+        set_retry_event_handler = getattr(wrapped, "set_retry_event_handler", None)
+        self.previous_retry_event_handler = getattr(wrapped, "retry_event_handler", None)
+        if callable(set_retry_event_handler):
+            set_retry_event_handler(self._record_retry_event)
+
+    def close(self) -> None:
+        set_retry_event_handler = getattr(self.wrapped, "set_retry_event_handler", None)
+        if callable(set_retry_event_handler):
+            set_retry_event_handler(self.previous_retry_event_handler)
 
     def resolve_trading_days_from(self, start_date: str, n_days: int) -> list[str]:
         return self._record(
@@ -344,6 +369,18 @@ class LoggingMarketDataClient:
             },
         )
         return result
+
+    def _record_retry_event(self, event: dict[str, Any]) -> None:
+        _append_jsonl(
+            self.api_retry_log,
+            {
+                "timestamp": _now_iso(),
+                "run_id": self.run_id,
+                "sample_id": self.sample_id,
+                "source": "market_data_client",
+                **event,
+            },
+        )
 
 
 def _build_feature_set(backtest: BacktestResponse) -> dict[str, Any]:
@@ -685,6 +722,43 @@ def _sha256_for_path(path: Path) -> str | None:
     if not path.exists():
         return None
     return f"sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}"
+
+
+def _count_jsonl_rows(path: Path) -> int:
+    if not path.exists():
+        return 0
+    return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
+
+
+def _summarize_api_retries(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {
+            "retry_event_count": 0,
+            "total_retry_event_count": 0,
+            "retried_endpoint_count": 0,
+            "retried_endpoints": [],
+            "succeeded_after_retry_count": 0,
+            "final_failure_count": 0,
+            "had_retry": False,
+        }
+    events = [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    retry_events = [event for event in events if event.get("status") == "retrying"]
+    final_failure_events = [event for event in events if event.get("status") == "failed"]
+    succeeded_after_retry_events = [event for event in events if event.get("status") == "succeeded_after_retry"]
+    retried_endpoints = sorted({str(event.get("endpoint")) for event in retry_events if event.get("endpoint")})
+    return {
+        "retry_event_count": len(retry_events),
+        "total_retry_event_count": len(events),
+        "retried_endpoint_count": len(retried_endpoints),
+        "retried_endpoints": retried_endpoints,
+        "succeeded_after_retry_count": len(succeeded_after_retry_events),
+        "final_failure_count": len(final_failure_events),
+        "had_retry": bool(retry_events),
+    }
 
 
 def _default_artifact_root() -> Path:

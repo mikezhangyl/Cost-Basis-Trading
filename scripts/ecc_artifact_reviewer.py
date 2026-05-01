@@ -288,13 +288,15 @@ def collect_source_artifacts(run_dir: Path) -> dict[str, Any]:
     decision_logs = sorted(run_dir.glob("samples/*/signals/agent_decision_log.jsonl"))
     aggregate_decision_log = run_dir / "aggregate" / "agent-decisions.jsonl"
     decision_log_paths = decision_logs + ([aggregate_decision_log] if aggregate_decision_log.exists() else [])
-    optional_paths = [path for path in [api_call_log] if path.exists()] + stage_manifests + decision_log_paths
+    api_retry_log = run_dir / "api-retry-events.jsonl"
+    optional_paths = [path for path in [api_call_log, api_retry_log] if path.exists()] + stage_manifests + decision_log_paths
     return {
         "run_config": _load_json(run_dir / "run-config.json"),
         "run_manifest": _load_json(run_dir / "run-manifest.json"),
         "final_report": (run_dir / "aggregate" / "final_report.md").read_text(encoding="utf-8"),
         "ai_review": _load_json(run_dir / "aggregate" / "ai_review.json"),
         "api_calls": _load_jsonl(api_call_log) if api_call_log.exists() else [],
+        "api_retry_events": _load_jsonl(api_retry_log) if api_retry_log.exists() else [],
         "backtest_scores": [_load_json_with_path(path) for path in backtest_scores],
         "feature_sets": [_load_json_with_path(path) for path in feature_sets],
         "signal_files": [_load_json_with_path(path) for path in signal_files],

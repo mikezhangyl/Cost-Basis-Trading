@@ -54,6 +54,7 @@ def test_ecc_artifact_reviewer_writes_run_local_artifacts(tmp_path: Path) -> Non
 
     source_artifacts = json.loads((review_dir / "source-artifacts.json").read_text())
     assert source_artifacts["api_calls"][0]["endpoint"] == "cyq_chips"
+    assert source_artifacts["api_retry_events"][0]["status"] == "retrying"
     assert {manifest["content"]["stage"] for manifest in source_artifacts["stage_manifests"]} == {
         "features",
         "signals",
@@ -61,6 +62,7 @@ def test_ecc_artifact_reviewer_writes_run_local_artifacts(tmp_path: Path) -> Non
     }
     assert source_artifacts["decision_logs"][0]["content"][0]["agent"] == "strategy-agent"
     assert any(path.endswith("api-calls.jsonl") for path in source_artifacts["paths"])
+    assert any(path.endswith("api-retry-events.jsonl") for path in source_artifacts["paths"])
     assert any(path.endswith("features/manifest.json") for path in source_artifacts["paths"])
     assert any(path.endswith("signals/agent_decision_log.jsonl") for path in source_artifacts["paths"])
 
@@ -135,6 +137,7 @@ def test_collect_source_artifacts_includes_traceability_evidence(tmp_path: Path)
     artifacts = collect_source_artifacts(research_root / "run-test-1")
 
     assert artifacts["api_calls"][0]["endpoint"] == "cyq_chips"
+    assert artifacts["api_retry_events"][0]["endpoint"] == "cyq_chips"
     assert [call["row_count"] for call in artifacts["api_calls"]] == [30]
     assert {manifest["content"]["stage"] for manifest in artifacts["stage_manifests"]} == {
         "features",
@@ -208,6 +211,23 @@ def _write_research_run(
                 "params": {"ts_code": "000001.SZ"},
                 "status": "OK",
                 "row_count": 30,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (run_dir / "api-retry-events.jsonl").write_text(
+        json.dumps(
+            {
+                "endpoint": "cyq_chips",
+                "params": {"ts_code": "000001.SZ", "trade_date": "20260301"},
+                "attempt": 1,
+                "max_retries": 3,
+                "error_code": "NETWORK_ERROR",
+                "raw_error_message": "temporary gateway timeout",
+                "retryable": True,
+                "sleep_seconds": 0.5,
+                "status": "retrying",
             }
         )
         + "\n",

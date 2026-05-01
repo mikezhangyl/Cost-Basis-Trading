@@ -33,6 +33,7 @@ class FakeTushareClient(TushareMarketDataClient):
         self._pro = fake_pro
         self.max_retries = 3
         self.retry_sleep_seconds = 0
+        self.retry_event_handler = None
 
 
 def test_chip_distribution_queries_each_trading_day_to_avoid_row_limit() -> None:
@@ -99,6 +100,15 @@ class ExhaustedNetworkCyqPro(FakePro):
         raise RuntimeError("temporary gateway timeout")
 
 
+class SecretBearingCyqPro(FakePro):
+    def cyq_chips(self, **kwargs):
+        self.cyq_calls.append(kwargs)
+        raise RuntimeError(
+            'temporary failure {"token":"json-token"} token=abc123 '
+            "'api_key': 'quoted-key' secret: bare-secret password=\"hidden\""
+        )
+
+
 def test_chip_distribution_retries_transient_tushare_failures() -> None:
     fake_pro = TransientCyqPro()
     client = FakeTushareClient(fake_pro)
@@ -135,6 +145,48 @@ def test_chip_distribution_retries_chinese_rate_limit_messages_before_permission
 
     assert len(rows) == 3
     assert len(fake_pro.cyq_calls) == 4
+
+
+def test_chip_distribution_emits_retry_events_with_raw_error_summary() -> None:
+    fake_pro = ChineseRateLimitCyqPro()
+    client = FakeTushareClient(fake_pro)
+    events: list[dict] = []
+    client.set_retry_event_handler(events.append)
+
+    client.get_chip_distribution("600519.SH", "20260415", "20260415")
+
+    assert events[0]["endpoint"] == "cyq_chips"
+    assert events[0]["params"] == {"ts_code": "600519.SH", "trade_date": "20260415"}
+    assert events[0]["attempt"] == 1
+    assert events[0]["max_retries"] == 3
+    assert events[0]["error_code"] == "RATE_LIMITED"
+    assert events[0]["retryable"] is True
+    assert events[0]["status"] == "retrying"
+    assert "频次" in events[0]["raw_error_message"]
+    assert events[-1]["status"] == "succeeded_after_retry"
+    assert events[-1]["attempt"] == 2
+    assert events[-1]["error_code"] is None
+
+
+def test_chip_distribution_redacts_secret_like_values_from_retry_events() -> None:
+    fake_pro = SecretBearingCyqPro()
+    client = FakeTushareClient(fake_pro)
+    events: list[dict] = []
+    client.set_retry_event_handler(events.append)
+
+    try:
+        client.get_chip_distribution("600519.SH", "20260415", "20260415")
+    except DataUnavailableError:
+        pass
+    else:
+        raise AssertionError("Expected retry exhaustion to raise.")
+
+    assert "abc123" not in events[0]["raw_error_message"]
+    assert "json-token" not in events[0]["raw_error_message"]
+    assert "quoted-key" not in events[0]["raw_error_message"]
+    assert "bare-secret" not in events[0]["raw_error_message"]
+    assert "hidden" not in events[0]["raw_error_message"]
+    assert "[REDACTED]" in events[0]["raw_error_message"]
 
 
 def test_chip_distribution_reports_final_attempt_when_retries_are_exhausted() -> None:

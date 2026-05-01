@@ -1,7 +1,8 @@
 import os
+import re
 from datetime import UTC, datetime, timedelta
 from time import sleep
-from typing import Any
+from typing import Any, Callable
 
 from app.core.config import load_environment
 from app.domain.errors import DataErrorCode, DataUnavailableError
@@ -17,6 +18,10 @@ class TushareMarketDataClient:
         self._pro: Any | None = None
         self.max_retries = max(1, max_retries)
         self.retry_sleep_seconds = max(0, retry_sleep_seconds)
+        self.retry_event_handler: Callable[[dict[str, Any]], None] | None = None
+
+    def set_retry_event_handler(self, handler: Callable[[dict[str, Any]], None] | None) -> None:
+        self.retry_event_handler = handler
 
     @property
     def pro(self) -> Any:
@@ -36,6 +41,7 @@ class TushareMarketDataClient:
         data = self._call_tushare(
             "trade_cal",
             lambda: self.pro.trade_cal(exchange="SSE", start_date=start_probe, end_date=resolved_end, is_open="1"),
+            {"exchange": "SSE", "start_date": start_probe, "end_date": resolved_end, "is_open": "1"},
         )
 
         dates = sorted(str(item) for item in data["cal_date"].tolist())
@@ -50,6 +56,7 @@ class TushareMarketDataClient:
         data = self._call_tushare(
             "trade_cal",
             lambda: self.pro.trade_cal(exchange="SSE", start_date=start_date, end_date=end_probe, is_open="1"),
+            {"exchange": "SSE", "start_date": start_date, "end_date": end_probe, "is_open": "1"},
         )
         dates = sorted(str(item) for item in data["cal_date"].tolist())
         if len(dates) < n_days:
@@ -61,6 +68,7 @@ class TushareMarketDataClient:
             data = self._call_tushare(
                 "stock_basic",
                 lambda: self.pro.stock_basic(ts_code=ts_code, fields="ts_code,name"),
+                {"ts_code": ts_code, "fields": "ts_code,name"},
             )
         except Exception:
             return None
@@ -74,6 +82,7 @@ class TushareMarketDataClient:
             frame = self._call_tushare(
                 "cyq_chips",
                 lambda trade_date=trade_date: self.pro.cyq_chips(ts_code=ts_code, trade_date=trade_date),
+                {"ts_code": ts_code, "trade_date": trade_date},
             )
             if not frame.empty:
                 frames.append(frame)
@@ -94,6 +103,7 @@ class TushareMarketDataClient:
         data = self._call_tushare(
             "trade_cal",
             lambda: self.pro.trade_cal(exchange="SSE", start_date=start_date, end_date=end_date, is_open="1"),
+            {"exchange": "SSE", "start_date": start_date, "end_date": end_date, "is_open": "1"},
         )
         dates = sorted(str(item) for item in data["cal_date"].tolist())
         if not dates:
@@ -104,6 +114,7 @@ class TushareMarketDataClient:
         data = self._call_tushare(
             "daily",
             lambda: self.pro.daily(ts_code=ts_code, start_date=start_date, end_date=end_date),
+            {"ts_code": ts_code, "start_date": start_date, "end_date": end_date},
         )
         if data.empty:
             raise DataUnavailableError(DataErrorCode.EMPTY_DATA, "No daily price rows returned.")
@@ -123,20 +134,56 @@ class TushareMarketDataClient:
             for _, row in data.iterrows()
         ]
 
-    def _call_tushare(self, endpoint: str, call: Any) -> Any:
+    def _call_tushare(self, endpoint: str, call: Any, params: dict[str, Any]) -> Any:
         last_error: DataUnavailableError | None = None
         for attempt in range(1, self.max_retries + 1):
             try:
-                return call()
+                result = call()
+                if attempt > 1:
+                    self._emit_retry_event(
+                        {
+                            "endpoint": endpoint,
+                            "params": params,
+                            "attempt": attempt,
+                            "max_retries": self.max_retries,
+                            "error_code": None,
+                            "error_message": None,
+                            "raw_error_message": None,
+                            "retryable": False,
+                            "sleep_seconds": 0,
+                            "status": "succeeded_after_retry",
+                        }
+                    )
+                return result
             except Exception as error:
                 mapped_error = _map_tushare_error(error, endpoint=endpoint, attempt=attempt, max_retries=self.max_retries)
+                retryable = _is_retryable_tushare_error(mapped_error)
+                sleep_seconds = self.retry_sleep_seconds * (2 ** (attempt - 1))
+                self._emit_retry_event(
+                    {
+                        "endpoint": endpoint,
+                        "params": params,
+                        "attempt": attempt,
+                        "max_retries": self.max_retries,
+                        "error_code": mapped_error.code.value,
+                        "error_message": mapped_error.message,
+                        "raw_error_message": _sanitize_error_message(str(error)),
+                        "retryable": retryable and attempt < self.max_retries,
+                        "sleep_seconds": sleep_seconds if retryable and attempt < self.max_retries else 0,
+                        "status": "retrying" if retryable and attempt < self.max_retries else "failed",
+                    }
+                )
                 if not _is_retryable_tushare_error(mapped_error) or attempt >= self.max_retries:
                     raise mapped_error from error
                 last_error = mapped_error
-                sleep(self.retry_sleep_seconds * (2 ** (attempt - 1)))
+                sleep(sleep_seconds)
         if last_error is not None:
             raise last_error
         raise DataUnavailableError(DataErrorCode.NETWORK_ERROR, f"Tushare {endpoint} request failed.")
+
+    def _emit_retry_event(self, event: dict[str, Any]) -> None:
+        if self.retry_event_handler is not None:
+            self.retry_event_handler(event)
 
 
 def _optional_float(value: Any) -> float | None:
@@ -173,3 +220,18 @@ def _retry_suffix(endpoint: str | None, attempt: int | None, max_retries: int | 
     if endpoint is None or attempt is None or max_retries is None:
         return ""
     return f" endpoint={endpoint} attempt={attempt}/{max_retries}"
+
+
+def _sanitize_error_message(message: str, max_length: int = 500) -> str:
+    cleaned = message.replace("\n", " ").replace("\r", " ")
+    cleaned = re.sub(
+        r"(?i)([\"']?\b(?:token|api[_-]?key|secret|password)\b[\"']?\s*[:=]\s*)([\"'])(.*?)(\2)",
+        lambda match: f"{match.group(1)}{match.group(2)}[REDACTED]{match.group(4)}",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"(?i)([\"']?\b(?:token|api[_-]?key|secret|password)\b[\"']?\s*[:=]\s*)(?![\"'])[^\s,;}]+",
+        lambda match: f"{match.group(1)}[REDACTED]",
+        cleaned,
+    )
+    return cleaned[:max_length]

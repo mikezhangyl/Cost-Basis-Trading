@@ -52,7 +52,8 @@ Implemented first research-run behavior:
 - each sample freezes candidate strategy signals before scoring future returns
 - initial candidate strategies are `composite_baseline` and `market_context_followthrough`
 - scoring uses available `N+1`, `N+3`, `N+5`, `N+15`, `N+30`, `N+60`, `N+90`, and `N+180` directional returns; `N/A` observations are tracked but excluded from average directional score
-- backend writes trace artifacts under `docs/research-runs/<run_id>/`
+- backend writes trace artifacts under `docs/research-runs/<run_id>/`, including `api-calls.jsonl` and `api-retry-events.jsonl`
+- `run-manifest.json` summarizes logged market-data call count and retry status so Tushare instability is visible even when retries eventually succeed
 - if `DEEPSEEK_API_KEY` is configured, the optional AI research agent reviews the run through the OpenAI-compatible DeepSeek API and writes aggregate review artifacts
 - backend validates the final AI report for canonical observation-label coverage; if any `N+1` / `N+3` / `N+5` / `N+15` / `N+30` / `N+60` / `N+90` / `N+180` label is missing, it appends a deterministic observation coverage section and records `report_validation`
 - API response includes AI review status, model, summary, report validation, and review/report artifact references

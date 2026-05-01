@@ -51,7 +51,7 @@ This first research-run surface is the implementation seed for the artifact-driv
 2. The backend creates a `run_id` and writes `run-config.json`.
 3. For each sample start date, the backend attempts to resolve forward trading days through `M + 180`.
 4. The first `M` trading days form the analysis window and the `M`th trading day is the signal date.
-5. Data-collection calls are recorded to `api-calls.jsonl`.
+5. Data-collection calls are recorded to `api-calls.jsonl`, and retry attempts are recorded to `api-retry-events.jsonl`.
 6. Feature artifacts are written under `samples/<sample_id>/features/`.
 7. Candidate Strategy Agent outputs are written as frozen signal artifacts under `samples/<sample_id>/signals/`.
 8. The Backtest Evaluator scores each frozen signal against `N+1`, `N+3`, `N+5`, `N+15`, `N+30`, `N+60`, `N+90`, and `N+180`; unavailable future bars are recorded as `N/A`.
@@ -83,7 +83,9 @@ Tushare client resilience:
 
 - Tushare requests use bounded retries for transient `NETWORK_ERROR` and `RATE_LIMITED` failures.
 - Permission and entitlement failures are not retried.
-- Retry exhaustion keeps the final attempt number in the error message so `api-calls.jsonl` can show where the external service failed.
+- Retry attempts are emitted as structured events and research runs persist them to `api-retry-events.jsonl`.
+- Retry exhaustion keeps the final attempt number in the error message so `api-calls.jsonl` and `api-retry-events.jsonl` can show where the external service failed.
+- `run-manifest.json` includes `logged_market_data_call_count` for service-level data calls and `api_retry_summary` for retry/final-failure visibility.
 
 Backtest endpoint:
 
