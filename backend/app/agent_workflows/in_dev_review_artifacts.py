@@ -21,6 +21,14 @@ def default_research_run_root() -> Path:
     return Path(__file__).resolve().parents[3] / "docs" / "research-runs"
 
 
+def build_run_review_root(run_dir: Path) -> Path:
+    return run_dir / "in-dev-reviews"
+
+
+def build_run_review_dir(run_dir: Path, review_id: str) -> Path:
+    return build_run_review_root(run_dir) / review_id
+
+
 def default_checkpoint_path() -> Path:
     return Path(__file__).resolve().parents[2] / "data" / "langgraph" / "in_dev_review_checkpoints.sqlite"
 

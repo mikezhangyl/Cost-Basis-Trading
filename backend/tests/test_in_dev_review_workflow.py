@@ -8,14 +8,12 @@ from app.domain.models import InDevReviewRequest
 
 def test_in_dev_review_writes_artifacts_and_waits_for_approval(tmp_path: Path) -> None:
     research_root = tmp_path / "research-runs"
-    review_root = tmp_path / "in-dev-reviews"
     plan_root = tmp_path / "plans"
     checkpoint_path = tmp_path / "checkpoints.sqlite"
     _write_plan_docs(plan_root)
     _write_research_run(research_root, "run-test-1")
     service = InDevReviewService(
         research_run_root=research_root,
-        review_root=review_root,
         plan_doc_paths=[plan_root / "current-state.md", plan_root / "architecture.md"],
         checkpoint_path=checkpoint_path,
         review_client=StaticInDevReviewClient("LLM review completed."),
@@ -28,6 +26,7 @@ def test_in_dev_review_writes_artifacts_and_waits_for_approval(tmp_path: Path) -
     assert result.approval_required is True
     assert result.findings_count == 2
     review_dir = Path(result.artifact_dir)
+    assert review_dir.parent == research_root / "run-test-1" / "in-dev-reviews"
     assert (review_dir / "review-config.json").exists()
     assert (review_dir / "source-artifacts.json").exists()
     assert (review_dir / "plan-snapshot.json").exists()
@@ -36,6 +35,9 @@ def test_in_dev_review_writes_artifacts_and_waits_for_approval(tmp_path: Path) -
     assert (review_dir / "in-dev-report.md").exists()
     assert (review_dir / "graph-state.json").exists()
     assert (review_dir / "workflow-events.jsonl").exists()
+    latest = json.loads((research_root / "run-test-1" / "in-dev-reviews" / "latest.json").read_text())
+    assert latest["review_id"] == result.review_id
+    assert latest["artifact_dir"] == result.artifact_dir
 
     findings = json.loads((review_dir / "findings.json").read_text())
     assert findings["status"] == "needs_fix"
@@ -48,14 +50,12 @@ def test_in_dev_review_writes_artifacts_and_waits_for_approval(tmp_path: Path) -
 
 def test_in_dev_review_approval_resumes_graph(tmp_path: Path) -> None:
     research_root = tmp_path / "research-runs"
-    review_root = tmp_path / "in-dev-reviews"
     plan_root = tmp_path / "plans"
     checkpoint_path = tmp_path / "checkpoints.sqlite"
     _write_plan_docs(plan_root)
     _write_research_run(research_root, "run-test-1")
     service = InDevReviewService(
         research_run_root=research_root,
-        review_root=review_root,
         plan_doc_paths=[plan_root / "current-state.md", plan_root / "architecture.md"],
         checkpoint_path=checkpoint_path,
         review_client=StaticInDevReviewClient("LLM review completed."),
@@ -69,11 +69,32 @@ def test_in_dev_review_approval_resumes_graph(tmp_path: Path) -> None:
     graph_state = json.loads((Path(approved.artifact_dir) / "graph-state.json").read_text())
     assert graph_state["approval"]["approved"] is True
     assert graph_state["approval"]["notes"] == "Approved for planning."
+    latest = json.loads((research_root / "run-test-1" / "in-dev-reviews" / "latest.json").read_text())
+    assert latest["status"] == "approved"
+
+
+def test_in_dev_review_get_finds_run_local_artifact(tmp_path: Path) -> None:
+    research_root = tmp_path / "research-runs"
+    plan_root = tmp_path / "plans"
+    checkpoint_path = tmp_path / "checkpoints.sqlite"
+    _write_plan_docs(plan_root)
+    _write_research_run(research_root, "run-test-1")
+    service = InDevReviewService(
+        research_run_root=research_root,
+        plan_doc_paths=[plan_root / "current-state.md", plan_root / "architecture.md"],
+        checkpoint_path=checkpoint_path,
+        review_client=StaticInDevReviewClient("LLM review completed."),
+    )
+    created = service.create_review(InDevReviewRequest(run_id="run-test-1"))
+
+    found = service.get_review(created.review_id)
+
+    assert found.review_id == created.review_id
+    assert found.artifact_dir == created.artifact_dir
 
 
 def test_in_dev_review_fails_when_report_is_missing(tmp_path: Path) -> None:
     research_root = tmp_path / "research-runs"
-    review_root = tmp_path / "in-dev-reviews"
     plan_root = tmp_path / "plans"
     _write_plan_docs(plan_root)
     run_dir = research_root / "run-test-1"
@@ -84,7 +105,6 @@ def test_in_dev_review_fails_when_report_is_missing(tmp_path: Path) -> None:
     (aggregate_dir / "ai_review.json").write_text("{}", encoding="utf-8")
     service = InDevReviewService(
         research_run_root=research_root,
-        review_root=review_root,
         plan_doc_paths=[plan_root / "current-state.md", plan_root / "architecture.md"],
         checkpoint_path=tmp_path / "checkpoints.sqlite",
         review_client=StaticInDevReviewClient("LLM review completed."),

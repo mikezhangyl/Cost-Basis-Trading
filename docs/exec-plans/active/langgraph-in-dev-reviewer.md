@@ -70,20 +70,21 @@ New runtime directories:
 backend/data/langgraph/
   in_dev_review_checkpoints.sqlite
 
-docs/in-dev-reviews/
-  .gitignore
-  review-<timestamp>-<shortid>/
-    review-config.json
-    source-artifacts.json
-    plan-snapshot.json
-    findings.json
-    fix-plan-draft.md
-    in-dev-report.md
-    graph-state.json
-    workflow-events.jsonl
+docs/research-runs/run-<timestamp>-<shortid>/
+  in-dev-reviews/
+    latest.json
+    review-<timestamp>-<shortid>/
+      review-config.json
+      source-artifacts.json
+      plan-snapshot.json
+      findings.json
+      fix-plan-draft.md
+      in-dev-report.md
+      graph-state.json
+      workflow-events.jsonl
 ```
 
-`docs/in-dev-reviews/review-*/` should be ignored by git, matching `docs/research-runs/run-*/`.
+New in-dev review reports live beside the research run they review, so one run directory contains the raw samples, aggregate report, and automated development review. Historical `docs/in-dev-reviews/review-*/` reports may still exist as legacy artifacts and remain ignored by git.
 
 ## Graph Nodes
 
@@ -265,7 +266,7 @@ git diff --check
 6. Add API endpoints.
 7. Add tests.
 8. Run InDevReviewer against the latest research run.
-9. Review generated `docs/in-dev-reviews/<review_id>/in-dev-report.md`.
+9. Review generated `docs/research-runs/<run_id>/in-dev-reviews/<review_id>/in-dev-report.md`.
 
 ## Human Approval Rule
 

@@ -7,6 +7,7 @@ from langgraph.types import Command
 from app.agent_workflows.in_dev_review_artifacts import (
     build_artifact_refs,
     build_review_id,
+    build_run_review_dir,
     default_checkpoint_path,
     default_plan_doc_paths,
     default_research_run_root,
@@ -37,7 +38,7 @@ class InDevReviewService:
         review_client: InDevReviewClient | None = None,
     ) -> None:
         self.research_run_root = research_run_root or default_research_run_root()
-        self.review_root = review_root or default_review_root()
+        self.legacy_review_root = review_root or default_review_root()
         self.plan_doc_paths = plan_doc_paths or default_plan_doc_paths()
         self.checkpoint_path = checkpoint_path or default_checkpoint_path()
         self.review_client = review_client if review_client is not None else DeepSeekInDevReviewClient.from_environment()
@@ -47,7 +48,7 @@ class InDevReviewService:
         run_dir = self.research_run_root / request.run_id
         if not run_dir.exists():
             raise FileNotFoundError(str(run_dir))
-        review_dir = self.review_root / review_id
+        review_dir = build_run_review_dir(run_dir, review_id)
         review_dir.mkdir(parents=True, exist_ok=True)
         initial_state = _build_initial_state(
             review_id=review_id,
@@ -62,17 +63,20 @@ class InDevReviewService:
                 "review_id": review_id,
                 "run_id": request.run_id,
                 "status": "created",
+                "storage": "run_local",
+                "research_run_dir": str(run_dir),
+                "artifact_dir": str(review_dir),
                 "plan_doc_paths": [str(path) for path in self.plan_doc_paths],
             },
         )
         result = self._invoke(initial_state, review_id)
         status = "awaiting_approval" if "__interrupt__" in result else str(result.get("status", "failed"))
-        return _response(review_id, request.run_id, status, review_dir)
+        response = _response(review_id, request.run_id, status, review_dir)
+        _write_latest_review_ref(review_dir, response)
+        return response
 
     def approve_review(self, review_id: str, approved: bool, notes: str | None = None) -> InDevReviewResponse:
-        review_dir = self.review_root / review_id
-        if not review_dir.exists():
-            raise FileNotFoundError(str(review_dir))
+        review_dir = self._find_review_dir(review_id)
         config = {"configurable": {"thread_id": review_id}}
         with SqliteSaver.from_conn_string(str(self.checkpoint_path)) as checkpointer:
             checkpointer.setup()
@@ -80,16 +84,32 @@ class InDevReviewService:
             result = graph.invoke(Command(resume={"approved": approved, "notes": notes}), config=config)
         status = str(result.get("status", "approved" if approved else "rejected"))
         run_id = str(result.get("run_id") or _read_review_config(review_dir).get("run_id", ""))
-        return _response(review_id, run_id, status, review_dir)
+        response = _response(review_id, run_id, status, review_dir)
+        _write_latest_review_ref(review_dir, response)
+        return response
 
     def get_review(self, review_id: str) -> InDevReviewResponse:
-        review_dir = self.review_root / review_id
-        if not review_dir.exists():
-            raise FileNotFoundError(str(review_dir))
+        review_dir = self._find_review_dir(review_id)
         config = _read_review_config(review_dir)
         graph_state = _read_graph_state(review_dir)
-        status = str(graph_state.get("status") or "awaiting_approval")
+        latest = _read_latest_review_ref(review_dir)
+        status = str(latest.get("status") or graph_state.get("status") or "awaiting_approval")
+        if status == "running":
+            status = "awaiting_approval"
         return _response(review_id, str(config.get("run_id", "")), status, review_dir)
+
+    def _find_review_dir(self, review_id: str) -> Path:
+        safe_review_id = _validate_review_id(review_id)
+        legacy_review_dir = self.legacy_review_root / safe_review_id
+        if legacy_review_dir.exists():
+            return legacy_review_dir
+
+        matches = sorted(self.research_run_root.glob(f"*/in-dev-reviews/{safe_review_id}"))
+        if len(matches) == 1:
+            return matches[0]
+        if not matches:
+            raise FileNotFoundError(str(legacy_review_dir))
+        raise FileExistsError(f"Multiple in-dev review directories found for {safe_review_id}.")
 
     def _invoke(self, initial_state: InDevReviewState, thread_id: str) -> dict:
         self.checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
@@ -164,6 +184,29 @@ def _response(review_id: str, run_id: str, status: str, review_dir: Path) -> InD
         approval_required=status == "awaiting_approval",
         artifact_refs=build_artifact_refs(review_dir),
     )
+
+
+def _validate_review_id(review_id: str) -> str:
+    cleaned = review_id.strip()
+    if not cleaned or "/" in cleaned or "\\" in cleaned or ".." in cleaned or "*" in cleaned or "?" in cleaned:
+        raise FileNotFoundError(cleaned or review_id)
+    return cleaned
+
+
+def _write_latest_review_ref(review_dir: Path, response: InDevReviewResponse) -> None:
+    write_json(review_dir.parent / "latest.json", response.model_dump(mode="json"))
+
+
+def _read_latest_review_ref(review_dir: Path) -> dict:
+    import json
+
+    path = review_dir.parent / "latest.json"
+    if not path.exists():
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("review_id") != review_dir.name:
+        return {}
+    return payload
 
 
 def _read_review_config(review_dir: Path) -> dict:
