@@ -86,6 +86,8 @@ Backtest endpoint:
 Research-run endpoint:
 
 - `POST /api/research-runs`
+- returns deterministic sample scores plus optional AI review metadata
+- exposes `ai_review.report_validation` so the UI can show whether the final report already covered every configured observation label or was deterministically corrected
 
 ## Strategy Boundary
 
