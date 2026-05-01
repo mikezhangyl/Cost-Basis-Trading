@@ -5,8 +5,11 @@ from pathlib import Path
 
 import pytest
 
+sys.path.append(str(Path(__file__).resolve().parents[2]))
+
 from app.domain.models import ChipDistributionPoint, DailyPriceBar
 from app.factors.chip_factors import build_daily_chip_snapshot, build_factor_values
+from scripts.chip_factor_runner import run_factor_production
 
 
 def test_daily_chip_snapshot_calculates_hand_checked_values() -> None:
@@ -209,3 +212,214 @@ def test_chip_factor_runner_refuses_to_overwrite_existing_run(tmp_path: Path) ->
 
     assert completed.returncode != 0
     assert "immutable" in completed.stderr
+
+
+def test_chip_factor_runner_live_mode_uses_local_cache_and_retry_logs(tmp_path: Path) -> None:
+    client = FakeFactorDataClient()
+
+    result = run_factor_production(
+        stock_codes=["000001.SZ"],
+        factor_start_date="20260105",
+        factor_end_date="20260107",
+        artifact_root=tmp_path / "factor-runs",
+        cache_root=tmp_path / "factor-cache",
+        run_id="factor-run-live-test",
+        dry_run=False,
+        data_client=client,
+        warmup_trading_days=20,
+    )
+
+    run_dir = tmp_path / "factor-runs" / "factor-run-live-test"
+    stock_dir = run_dir / "stocks" / "000001.SZ"
+    assert result["status"] == "completed"
+    assert client.retry_event_handler is None
+    assert (tmp_path / "factor-cache" / "tushare" / "cyq_chips" / "000001.SZ" / "20251201.json").exists()
+    assert (tmp_path / "factor-cache" / "tushare" / "daily" / "000001.SZ" / "20251201_20260107.json").exists()
+
+    api_calls = [
+        json.loads(line)
+        for line in (run_dir / "api-calls.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    assert [call["endpoint"] for call in api_calls] == ["trade_cal", "cyq_chips", "daily"]
+    assert all(call["status"] == "ok" for call in api_calls)
+    assert api_calls[0]["params"]["start_date"] == "20251106"
+    assert api_calls[0]["params"]["factor_start_date"] == "20260105"
+
+    retry_events = [
+        json.loads(line)
+        for line in (run_dir / "api-retry-events.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    assert retry_events[0]["endpoint"] == "cyq_chips"
+    assert retry_events[0]["status"] == "retrying"
+
+    factors = [
+        json.loads(line)
+        for line in (stock_dir / "factors.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    factor_dates = {factor["factor_date"] for factor in factors}
+    assert factor_dates == {"20260105", "20260106", "20260107"}
+    by_date_and_id = {(factor["factor_date"], factor["factor_id"]): factor for factor in factors}
+    assert by_date_and_id[("20260105", "profit_ratio_delta_20d")]["quality_status"] == "OK"
+    assert by_date_and_id[("20260105", "profit_ratio_delta_20d")]["value"] is not None
+    manifest = json.loads((run_dir / "factor-run-manifest.json").read_text())
+    assert manifest["dry_run"] is False
+    assert manifest["stock_outputs"][0]["factor_date_count"] == 3
+    assert manifest["stock_outputs"][0]["warmup_snapshot_count"] == 20
+    assert manifest["stock_outputs"][0]["checksums"]["factors.jsonl"].startswith("sha256:")
+    chip_cache = json.loads(
+        (tmp_path / "factor-cache" / "tushare" / "cyq_chips" / "000001.SZ" / "20251201.json").read_text()
+    )
+    assert chip_cache["source"]["factor_run_id"] == "factor-run-live-test"
+    assert chip_cache["rows_checksum"].startswith("sha256:")
+
+
+def test_chip_factor_runner_live_mode_restores_retry_handler_when_api_call_fails(tmp_path: Path) -> None:
+    client = FailingFactorDataClient()
+    original_handler = lambda event: None
+    client.set_retry_event_handler(original_handler)
+
+    with pytest.raises(RuntimeError, match="temporary failure"):
+        run_factor_production(
+            stock_codes=["000001.SZ"],
+            factor_start_date="20260105",
+            factor_end_date="20260107",
+            artifact_root=tmp_path / "factor-runs",
+            cache_root=tmp_path / "factor-cache",
+            run_id="factor-run-live-failure-test",
+            dry_run=False,
+            data_client=client,
+            warmup_trading_days=20,
+        )
+
+    run_dir = tmp_path / "factor-runs" / "factor-run-live-failure-test"
+    assert client.retry_event_handler is original_handler
+    api_calls = [
+        json.loads(line)
+        for line in (run_dir / "api-calls.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    assert [(call["endpoint"], call["status"]) for call in api_calls] == [
+        ("trade_cal", "ok"),
+        ("cyq_chips", "failed"),
+    ]
+    assert "temporary failure" in api_calls[-1]["error"]
+
+
+def test_chip_factor_runner_live_mode_supports_private_trading_day_resolver(tmp_path: Path) -> None:
+    client = PrivateTradingDaysFactorDataClient()
+
+    run_factor_production(
+        stock_codes=["000001.SZ"],
+        factor_start_date="20260105",
+        factor_end_date="20260105",
+        artifact_root=tmp_path / "factor-runs",
+        cache_root=tmp_path / "factor-cache",
+        run_id="factor-run-live-private-resolver-test",
+        dry_run=False,
+        data_client=client,
+        warmup_trading_days=2,
+    )
+
+    assert client.private_resolver_called is True
+
+
+class FakeFactorDataClient:
+    def __init__(self) -> None:
+        self.retry_event_handler = None
+
+    def set_retry_event_handler(self, handler: object) -> None:
+        self.retry_event_handler = handler
+
+    def get_trading_days_between(self, start_date: str, end_date: str) -> list[str]:
+        return [f"202512{day:02d}" for day in range(1, 21)] + ["20260105", "20260106", "20260107"]
+
+    def get_chip_distribution(self, ts_code: str, start_date: str, end_date: str) -> list[ChipDistributionPoint]:
+        if self.retry_event_handler is not None:
+            self.retry_event_handler(
+                {
+                    "endpoint": "cyq_chips",
+                    "params": {"ts_code": ts_code, "trade_date": "20260102"},
+                    "attempt": 1,
+                    "max_retries": 3,
+                    "status": "retrying",
+                    "retryable": True,
+                    "sleep_seconds": 0,
+                    "error_code": "NETWORK_ERROR",
+                    "error_message": "fake retry",
+                    "raw_error_message": "temporary",
+                }
+            )
+        rows: list[ChipDistributionPoint] = []
+        for index, trade_date in enumerate(self.get_trading_days_between(start_date, end_date)):
+            base = 10 + index
+            rows.extend(
+                [
+                    ChipDistributionPoint(ts_code=ts_code, trade_date=trade_date, price=base, percent=20),
+                    ChipDistributionPoint(ts_code=ts_code, trade_date=trade_date, price=base + 1, percent=50),
+                    ChipDistributionPoint(ts_code=ts_code, trade_date=trade_date, price=base + 2, percent=30),
+                ]
+            )
+        return rows
+
+    def get_daily_prices(self, ts_code: str, start_date: str, end_date: str) -> list[DailyPriceBar]:
+        return [
+            DailyPriceBar(
+                ts_code=ts_code,
+                trade_date=trade_date,
+                open=10 + index,
+                high=12 + index,
+                low=9 + index,
+                close=11.5 + index,
+                vol=1000 + index,
+                amount=10000 + index,
+            )
+            for index, trade_date in enumerate(self.get_trading_days_between(start_date, end_date))
+        ]
+
+
+class FailingFactorDataClient(FakeFactorDataClient):
+    def get_chip_distribution(self, ts_code: str, start_date: str, end_date: str) -> list[ChipDistributionPoint]:
+        raise RuntimeError("temporary failure")
+
+
+class PrivateTradingDaysFactorDataClient(FakeFactorDataClient):
+    get_trading_days_between = None
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.private_resolver_called = False
+
+    def _trading_days_between(self, start_date: str, end_date: str) -> list[str]:
+        self.private_resolver_called = True
+        return ["20251201", "20251202", "20260105"]
+
+    def get_chip_distribution(self, ts_code: str, start_date: str, end_date: str) -> list[ChipDistributionPoint]:
+        rows: list[ChipDistributionPoint] = []
+        for index, trade_date in enumerate(self._trading_days_between(start_date, end_date)):
+            base = 10 + index
+            rows.extend(
+                [
+                    ChipDistributionPoint(ts_code=ts_code, trade_date=trade_date, price=base, percent=20),
+                    ChipDistributionPoint(ts_code=ts_code, trade_date=trade_date, price=base + 1, percent=50),
+                    ChipDistributionPoint(ts_code=ts_code, trade_date=trade_date, price=base + 2, percent=30),
+                ]
+            )
+        return rows
+
+    def get_daily_prices(self, ts_code: str, start_date: str, end_date: str) -> list[DailyPriceBar]:
+        return [
+            DailyPriceBar(
+                ts_code=ts_code,
+                trade_date=trade_date,
+                open=10 + index,
+                high=12 + index,
+                low=9 + index,
+                close=11.5 + index,
+                vol=1000 + index,
+                amount=10000 + index,
+            )
+            for index, trade_date in enumerate(self._trading_days_between(start_date, end_date))
+        ]

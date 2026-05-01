@@ -78,7 +78,7 @@ class TushareMarketDataClient:
 
     def get_chip_distribution(self, ts_code: str, start_date: str, end_date: str) -> list[ChipDistributionPoint]:
         frames = []
-        for trade_date in self._trading_days_between(start_date, end_date):
+        for trade_date in self.get_trading_days_between(start_date, end_date):
             frame = self._call_tushare(
                 "cyq_chips",
                 lambda trade_date=trade_date: self.pro.cyq_chips(ts_code=ts_code, trade_date=trade_date),
@@ -98,6 +98,9 @@ class TushareMarketDataClient:
             )
             for _, row in data.iterrows()
         ]
+
+    def get_trading_days_between(self, start_date: str, end_date: str) -> list[str]:
+        return self._trading_days_between(start_date, end_date)
 
     def _trading_days_between(self, start_date: str, end_date: str) -> list[str]:
         data = self._call_tushare(
