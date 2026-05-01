@@ -38,6 +38,34 @@ python scripts/ecc_quality_workflow.py review-latest-research
 
 This command finds the newest `docs/research-runs/run-*`, runs ECC Artifact Reviewer for it, and prints a JSON payload containing the generated `quality-subagent-review-prompt.md` path plus the review artifact refs. Parent Codex should use it as a sub-agent task entrypoint, not as a product workflow.
 
+Stdout is always a JSON object, not a bare path. Callers should parse the JSON and read `quality_subagent_prompt` when they need the prompt file:
+
+```json
+{
+  "workflow": "review-latest-research",
+  "run_id": "run-...",
+  "run_dir": "docs/research-runs/run-...",
+  "review": {
+    "review_id": "artifact-review-...",
+    "run_id": "run-...",
+    "status": "passed | needs_fix",
+    "artifact_dir": "docs/research-runs/run-.../ecc-artifact-reviews/artifact-review-...",
+    "findings_count": 0,
+    "approval_required": false,
+    "artifact_refs": {
+      "report": ".../artifact-review-report.md",
+      "findings": ".../findings.json",
+      "fix_plan": ".../fix-plan-draft.md",
+      "quality_subagent_prompt": ".../quality-subagent-review-prompt.md",
+      "state": ".../review-state.json",
+      "events": ".../workflow-events.jsonl",
+      "external_calls": ".../external-review-calls.jsonl"
+    }
+  },
+  "quality_subagent_prompt": "docs/research-runs/run-.../ecc-artifact-reviews/artifact-review-.../quality-subagent-review-prompt.md"
+}
+```
+
 ## Output
 
 The reviewer writes:

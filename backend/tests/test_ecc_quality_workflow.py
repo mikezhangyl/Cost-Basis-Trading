@@ -61,9 +61,25 @@ def test_quality_workflow_cli_reviews_latest_research_run(tmp_path: Path) -> Non
     )
 
     payload = json.loads(completed.stdout)
+    assert set(payload) == {
+        "workflow",
+        "run_id",
+        "run_dir",
+        "review",
+        "quality_subagent_prompt",
+    }
     assert payload["workflow"] == "review-latest-research"
     assert payload["run_id"] == "run-20260501-000001-aaaaaaaa"
     assert payload["quality_subagent_prompt"].endswith("quality-subagent-review-prompt.md")
+    assert set(payload["review"]) == {
+        "review_id",
+        "run_id",
+        "status",
+        "artifact_dir",
+        "findings_count",
+        "approval_required",
+        "artifact_refs",
+    }
     assert payload["review"]["artifact_refs"]["quality_subagent_prompt"] == payload["quality_subagent_prompt"]
     assert set(payload["review"]["artifact_refs"]) == {
         "report",
@@ -74,7 +90,19 @@ def test_quality_workflow_cli_reviews_latest_research_run(tmp_path: Path) -> Non
         "events",
         "external_calls",
     }
+    review_dir = Path(payload["review"]["artifact_dir"])
     assert Path(payload["quality_subagent_prompt"]).exists()
+    assert (review_dir.parent / "latest.json").exists()
+    assert (review_dir / "review-config.json").exists()
+    assert (review_dir / "source-artifacts.json").exists()
+    assert (review_dir / "plan-snapshot.json").exists()
+    assert (review_dir / "findings.json").exists()
+    assert (review_dir / "fix-plan-draft.md").exists()
+    assert (review_dir / "artifact-review-report.md").exists()
+    assert (review_dir / "quality-subagent-review-prompt.md").exists()
+    assert (review_dir / "review-state.json").exists()
+    assert (review_dir / "workflow-events.jsonl").exists()
+    assert (review_dir / "external-review-calls.jsonl").exists()
 
 
 def _write_research_run(research_root: Path, run_id: str) -> None:
