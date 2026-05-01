@@ -27,5 +27,7 @@ Detailed chart design will be specified after the first signal table is working.
   defines the proposed source-traceable feature layer for daily chip-change analysis before candidate strategy implementation.
 - [chip-factor-autoresearch-agent.md](./chip-factor-autoresearch-agent.md)
   defines the auditable AI-agent research loop for scoped stock/date experiments, API-call logs, agent decisions, and multi-horizon validation.
+- [a-share-chip-backfill-agent.md](./a-share-chip-backfill-agent.md)
+  defines the local, idempotent Tushare `cyq_chips` backfill agent for active A-share chip-distribution history.
 - [multi-agent-research-workflow.md](./multi-agent-research-workflow.md)
   defines the Supervisor-Orchestrated, Artifact-Driven Multi-Agent Research Workflow: agent roles, artifact handoffs, readiness gating, manifests, and future-leak prevention.
