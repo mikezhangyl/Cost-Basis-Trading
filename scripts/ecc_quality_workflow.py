@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Callable
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
@@ -18,6 +21,28 @@ class QualityWorkflowResult:
     run_dir: str
     review: ArtifactReviewResult
     quality_subagent_prompt: str
+
+
+@dataclass(frozen=True)
+class QualityGateStepResult:
+    name: str
+    command: list[str]
+    cwd: str
+    status: str
+    returncode: int
+    duration_seconds: float
+    stdout_tail: str
+    stderr_tail: str
+
+
+@dataclass(frozen=True)
+class QualityGateResult:
+    workflow: str
+    status: str
+    steps: list[QualityGateStepResult]
+
+
+CommandRunner = Callable[[list[str], Path], subprocess.CompletedProcess[str]]
 
 
 def find_latest_research_run(research_run_root: Path | None = None) -> Path:
@@ -41,6 +66,37 @@ def review_latest_research(research_run_root: Path | None = None) -> QualityWork
     )
 
 
+def run_quality_gate(
+    repo_root: Path | None = None,
+    include_artifact_review: bool = False,
+    runner: CommandRunner | None = None,
+) -> QualityGateResult:
+    root = repo_root or Path(__file__).resolve().parents[1]
+    command_runner = runner or _run_command
+    commands = _quality_gate_commands(root, include_artifact_review)
+    results: list[QualityGateStepResult] = []
+    for name, command, cwd in commands:
+        started = time.monotonic()
+        completed = command_runner(command, cwd)
+        duration = time.monotonic() - started
+        status = "passed" if completed.returncode == 0 else "failed"
+        results.append(
+            QualityGateStepResult(
+                name=name,
+                command=command,
+                cwd=str(cwd),
+                status=status,
+                returncode=completed.returncode,
+                duration_seconds=round(duration, 3),
+                stdout_tail=_tail(completed.stdout),
+                stderr_tail=_tail(completed.stderr),
+            )
+        )
+        if completed.returncode != 0:
+            return QualityGateResult(workflow="quality-gate", status="failed", steps=results)
+    return QualityGateResult(workflow="quality-gate", status="passed", steps=results)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="ECC Quality workflow helpers for verification orchestration.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -54,13 +110,54 @@ def main() -> int:
         default=None,
         help="Directory containing run-* research artifacts. Defaults to docs/research-runs.",
     )
+    gate_parser = subparsers.add_parser(
+        "quality-gate",
+        help="Run the deterministic ECC quality gate intended for ECC Quality Sub-Agent execution.",
+    )
+    gate_parser.add_argument(
+        "--include-artifact-review",
+        action="store_true",
+        help="Also run review-latest-research as the final gate step.",
+    )
     args = parser.parse_args()
 
     if args.command == "review-latest-research":
         result = review_latest_research(args.research_run_root)
         print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
         return 0
+    if args.command == "quality-gate":
+        result = run_quality_gate(include_artifact_review=args.include_artifact_review)
+        print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
+        return 0 if result.status == "passed" else 1
     raise ValueError(f"Unsupported command: {args.command}")
+
+
+def _quality_gate_commands(root: Path, include_artifact_review: bool) -> list[tuple[str, list[str], Path]]:
+    commands = [
+        ("git_diff_check", ["git", "diff", "--check"], root),
+        ("backend_pytest", [sys.executable, "-m", "pytest", "-v"], root / "backend"),
+        ("frontend_vitest", ["npm", "run", "test"], root / "frontend"),
+        ("frontend_build", ["npm", "run", "build"], root / "frontend"),
+    ]
+    if include_artifact_review:
+        commands.append(
+            (
+                "ecc_artifact_review_latest",
+                [sys.executable, "scripts/ecc_quality_workflow.py", "review-latest-research"],
+                root,
+            )
+        )
+    return commands
+
+
+def _run_command(command: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=False)
+
+
+def _tail(output: str | None, max_chars: int = 4000) -> str:
+    if not output:
+        return ""
+    return output[-max_chars:]
 
 
 if __name__ == "__main__":

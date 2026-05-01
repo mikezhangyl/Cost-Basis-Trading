@@ -80,6 +80,20 @@ python scripts/ecc_quality_workflow.py review-latest-research
 
 Parent Codex should prefer this command when the user asks to review the latest run. The command only finds the latest run and prepares the artifact review packet; the ECC Quality Sub-Agent still performs the semantic review and updates review artifacts.
 
+Run the baseline deterministic quality gate:
+
+```bash
+python scripts/ecc_quality_workflow.py quality-gate
+```
+
+This command is the preferred baseline test entrypoint for ECC Quality Sub-Agent execution. It runs whitespace diff checks, backend pytest, frontend Vitest, and frontend production build in a fixed order. Parent Codex may still run smaller local checks for development feedback, but commit readiness should use the quality gate result plus any task-specific semantic reviews, security checks, or coverage checks that the change requires.
+
+When a task also produced a research report, include the latest artifact review packet:
+
+```bash
+python scripts/ecc_quality_workflow.py quality-gate --include-artifact-review
+```
+
 Ask an external DeepSeek reviewer for a second opinion:
 
 ```bash
@@ -95,6 +109,7 @@ The default path does not call an external LLM. `--no-llm` remains as a deprecat
 - Backend dependencies do not include LangGraph or LangSmith.
 - Verification execution is delegated to an ECC Quality Sub-Agent when the runtime supports sub-agents.
 - `scripts/ecc_quality_workflow.py review-latest-research` can prepare the latest run review packet.
+- `scripts/ecc_quality_workflow.py quality-gate` provides the baseline deterministic quality gate for ECC Quality Sub-Agent execution.
 - Reviewer artifacts are stored under `docs/research-runs/<run_id>/ecc-artifact-reviews/`.
 - `latest.json` points to the latest review for the run.
 - Review execution logs local events and optional external-review call summaries.
@@ -102,11 +117,8 @@ The default path does not call an external LLM. `--no-llm` remains as a deprecat
 
 ## Verification
 
-Run these verification commands inside the ECC Quality Sub-Agent when sub-agents are available. Parent Codex should remain the orchestrator and approval gate.
+Run the quality gate inside the ECC Quality Sub-Agent when sub-agents are available. Parent Codex should remain the orchestrator and approval gate.
 
 ```bash
-pytest -v
-npm run test
-npm run build
-git diff --check
+python scripts/ecc_quality_workflow.py quality-gate
 ```

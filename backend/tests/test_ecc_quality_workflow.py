@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
-from scripts.ecc_quality_workflow import find_latest_research_run, review_latest_research
+from scripts.ecc_quality_workflow import find_latest_research_run, review_latest_research, run_quality_gate
 
 
 def test_review_latest_research_runs_artifact_reviewer_for_newest_run(tmp_path: Path) -> None:
@@ -103,6 +103,66 @@ def test_quality_workflow_cli_reviews_latest_research_run(tmp_path: Path) -> Non
     assert (review_dir / "review-state.json").exists()
     assert (review_dir / "workflow-events.jsonl").exists()
     assert (review_dir / "external-review-calls.jsonl").exists()
+
+
+def test_quality_gate_runs_default_checks_in_subagent_order(tmp_path: Path) -> None:
+    calls: list[tuple[list[str], Path]] = []
+
+    def fake_runner(command: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+        calls.append((command, cwd))
+        return subprocess.CompletedProcess(command, 0, stdout="ok", stderr="")
+
+    result = run_quality_gate(repo_root=tmp_path, runner=fake_runner)
+
+    assert result.status == "passed"
+    assert [step.name for step in result.steps] == [
+        "git_diff_check",
+        "backend_pytest",
+        "frontend_vitest",
+        "frontend_build",
+    ]
+    assert calls == [
+        (["git", "diff", "--check"], tmp_path),
+        ([sys.executable, "-m", "pytest", "-v"], tmp_path / "backend"),
+        (["npm", "run", "test"], tmp_path / "frontend"),
+        (["npm", "run", "build"], tmp_path / "frontend"),
+    ]
+
+
+def test_quality_gate_can_include_latest_artifact_review(tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    def fake_runner(command: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="ok", stderr="")
+
+    result = run_quality_gate(repo_root=tmp_path, include_artifact_review=True, runner=fake_runner)
+
+    assert result.status == "passed"
+    assert [step.name for step in result.steps][-1] == "ecc_artifact_review_latest"
+    assert calls[-1] == [
+        sys.executable,
+        "scripts/ecc_quality_workflow.py",
+        "review-latest-research",
+    ]
+
+
+def test_quality_gate_records_failure_and_stops(tmp_path: Path) -> None:
+    calls: list[str] = []
+
+    def fake_runner(command: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+        calls.append(command[0])
+        if command[0] == "git":
+            return subprocess.CompletedProcess(command, 1, stdout="", stderr="bad whitespace")
+        return subprocess.CompletedProcess(command, 0, stdout="ok", stderr="")
+
+    result = run_quality_gate(repo_root=tmp_path, runner=fake_runner)
+
+    assert result.status == "failed"
+    assert [step.name for step in result.steps] == ["git_diff_check"]
+    assert result.steps[0].returncode == 1
+    assert result.steps[0].stderr_tail == "bad whitespace"
+    assert calls == ["git"]
 
 
 def _write_research_run(research_root: Path, run_id: str) -> None:

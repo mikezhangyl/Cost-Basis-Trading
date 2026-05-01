@@ -61,6 +61,24 @@ npm run dev
 
 The Vite dev server proxies `/api` to `http://127.0.0.1:8000`.
 
+## ECC Quality Gate
+
+The baseline deterministic quality gate is intended to be run by the ECC Quality Sub-Agent before commit:
+
+```bash
+python scripts/ecc_quality_workflow.py quality-gate
+```
+
+It runs `git diff --check`, backend `pytest -v`, frontend `npm run test`, and frontend `npm run build`.
+
+Parent Codex remains the orchestrator and approval gate. It may run smaller local checks while developing, but commit readiness should use this sub-agent gate result plus any task-specific reviews.
+
+When the task produced a research run report, include artifact review:
+
+```bash
+python scripts/ecc_quality_workflow.py quality-gate --include-artifact-review
+```
+
 ## Project Memory
 
 Durable project context lives under [docs](./docs/index.md).
