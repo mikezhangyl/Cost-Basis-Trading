@@ -155,6 +155,9 @@ def test_research_run_service_scores_strategies_and_writes_artifacts(tmp_path: P
     assert result.ai_review.status == "completed"
     assert result.ai_review.model == "fake-agent"
     assert result.ai_review.summary == "样本数量较少，当前只能作为流程验证。"
+    assert result.ai_review.report_validation is not None
+    assert result.ai_review.report_validation.status == "passed"
+    assert result.ai_review.report_validation.missing_observation_labels == []
     assert result.ai_review.artifact_refs == {
         "review": str(tmp_path / result.run_id / "aggregate" / "ai_review.json"),
         "decisions": str(tmp_path / result.run_id / "aggregate" / "agent-decisions.jsonl"),
@@ -222,6 +225,15 @@ def test_research_run_service_appends_deterministic_observation_coverage_when_ai
     review_payload = json.loads((run_dir / "aggregate" / "ai_review.json").read_text())
     assert review_payload["report_validation"]["status"] == "corrected"
     assert review_payload["report_validation"]["missing_observation_labels"] == [
+        "N+15",
+        "N+30",
+        "N+60",
+        "N+90",
+        "N+180",
+    ]
+    assert result.ai_review.report_validation is not None
+    assert result.ai_review.report_validation.status == "corrected"
+    assert result.ai_review.report_validation.missing_observation_labels == [
         "N+15",
         "N+30",
         "N+60",

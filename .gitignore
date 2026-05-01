@@ -17,6 +17,7 @@ dist/
 build/
 coverage/
 *.tsbuildinfo
+.playwright-mcp/
 
 *.sqlite
 *.sqlite3

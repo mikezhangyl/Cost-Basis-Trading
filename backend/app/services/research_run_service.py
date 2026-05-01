@@ -14,6 +14,7 @@ from app.domain.models import (
     ResearchAggregateScore,
     ResearchAiReviewSummary,
     ResearchObservationScore,
+    ResearchReportValidation,
     ResearchRunRequest,
     ResearchRunResponse,
     ResearchSampleResult,
@@ -601,11 +602,31 @@ def _build_ai_review_summary(run_dir: Path, ai_review: dict[str, Any]) -> Resear
         status=status,
         model=model if isinstance(model, str) else None,
         summary=str(ai_review.get("review_summary") or "AI research review did not provide a summary."),
+        report_validation=_build_report_validation(ai_review.get("report_validation")),
         artifact_refs={
             "review": str(aggregate_dir / "ai_review.json"),
             "decisions": str(aggregate_dir / "agent-decisions.jsonl"),
             "report": str(aggregate_dir / "final_report.md"),
         },
+    )
+
+
+def _build_report_validation(payload: Any) -> ResearchReportValidation | None:
+    if not isinstance(payload, dict):
+        return None
+    status = payload.get("status")
+    if status not in {"passed", "corrected"}:
+        return None
+    return ResearchReportValidation(
+        status=status,
+        canonical_observation_labels=[
+            str(label)
+            for label in payload.get("canonical_observation_labels", [])
+        ],
+        missing_observation_labels=[
+            str(label)
+            for label in payload.get("missing_observation_labels", [])
+        ],
     )
 
 

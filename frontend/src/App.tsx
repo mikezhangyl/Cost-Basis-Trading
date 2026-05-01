@@ -425,6 +425,23 @@ function ResearchRunView({ researchRun }: { researchRun: ResearchRunResponse }) 
             <p className="muted-text">{aiReviewStatusText(researchRun)}</p>
           </div>
           <p className="reason-callout">{researchRun.ai_review.summary}</p>
+          {researchRun.ai_review.report_validation ? (
+            <div className="validation-grid">
+              <ContextItem label="Report validation" value={researchRun.ai_review.report_validation.status} />
+              <ContextItem
+                label="Canonical offsets"
+                value={researchRun.ai_review.report_validation.canonical_observation_labels.join(" / ")}
+              />
+              <ContextItem
+                label="Missing labels"
+                value={
+                  researchRun.ai_review.report_validation.missing_observation_labels.length > 0
+                    ? researchRun.ai_review.report_validation.missing_observation_labels.join(" / ")
+                    : "None"
+                }
+              />
+            </div>
+          ) : null}
           <div className="artifact-grid">
             <ContextItem label="Review" value={researchRun.ai_review.artifact_refs.review} />
             <ContextItem label="Decisions" value={researchRun.ai_review.artifact_refs.decisions} />

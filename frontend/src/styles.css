@@ -436,7 +436,8 @@ th {
 }
 
 .context-grid,
-.artifact-grid {
+.artifact-grid,
+.validation-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(110px, 1fr));
   gap: 10px;
@@ -444,6 +445,10 @@ th {
 
 .artifact-grid {
   grid-template-columns: repeat(3, minmax(160px, 1fr));
+}
+
+.validation-grid {
+  grid-template-columns: minmax(130px, 0.6fr) minmax(220px, 1.6fr) minmax(180px, 1fr);
 }
 
 .context-item {
@@ -520,7 +525,8 @@ th {
   .research-form,
   .metric-grid,
   .context-grid,
-  .artifact-grid {
+  .artifact-grid,
+  .validation-grid {
     grid-template-columns: 1fr;
   }
 }

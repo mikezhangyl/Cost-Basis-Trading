@@ -82,6 +82,11 @@ export type ResearchRunResponse = {
     status: "completed" | "skipped" | "failed"
     model: string | null
     summary: string
+    report_validation: {
+      status: "passed" | "corrected"
+      canonical_observation_labels: string[]
+      missing_observation_labels: string[]
+    } | null
     artifact_refs: {
       review: string
       decisions: string

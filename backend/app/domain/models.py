@@ -249,10 +249,17 @@ class ResearchSampleResult(BaseModel):
     strategies: list[ResearchStrategyScore]
 
 
+class ResearchReportValidation(BaseModel):
+    status: Literal["passed", "corrected"]
+    canonical_observation_labels: list[str]
+    missing_observation_labels: list[str]
+
+
 class ResearchAiReviewSummary(BaseModel):
     status: Literal["completed", "skipped", "failed"]
     model: str | None = None
     summary: str
+    report_validation: ResearchReportValidation | None = None
     artifact_refs: dict[str, str]
 
 

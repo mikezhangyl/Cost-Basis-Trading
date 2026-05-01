@@ -129,6 +129,11 @@ const researchRunResponse = {
       status: "completed",
       model: "deepseek-v4-pro",
       summary: "未发现未来函数风险，但样本数量较少。",
+      report_validation: {
+        status: "corrected",
+        canonical_observation_labels: ["N+1", "N+3", "N+5", "N+15", "N+30", "N+60", "N+90", "N+180"],
+        missing_observation_labels: ["N+15", "N+30"]
+      },
       artifact_refs: {
         review: "docs/research-runs/run-test-1/aggregate/ai_review.json",
         decisions: "docs/research-runs/run-test-1/aggregate/agent-decisions.jsonl",
@@ -307,12 +312,15 @@ describe("App", () => {
     expect(await screen.findByText("run-test-1")).toBeInTheDocument()
     expect(screen.getByText("000001.SZ 平安银行")).toBeInTheDocument()
     expect(screen.getByText("2 samples / 10 days")).toBeInTheDocument()
-    expect(screen.getByText("N+1 / N+3 / N+5 / N+15 / N+30 / N+60 / N+90 / N+180")).toBeInTheDocument()
+    expect(screen.getAllByText("N+1 / N+3 / N+5 / N+15 / N+30 / N+60 / N+90 / N+180").length).toBeGreaterThan(0)
     expect(screen.getByText("market_context_followthrough")).toBeInTheDocument()
     expect(screen.getByText("+1.80%")).toBeInTheDocument()
     expect(screen.getByText("docs/research-runs/run-test-1")).toBeInTheDocument()
     expect(screen.getByText("AI agent review")).toBeInTheDocument()
     expect(screen.getByText("completed / deepseek-v4-pro")).toBeInTheDocument()
+    expect(screen.getByText("Report validation")).toBeInTheDocument()
+    expect(screen.getByText("corrected")).toBeInTheDocument()
+    expect(screen.getByText("N+15 / N+30")).toBeInTheDocument()
     expect(screen.getByText("未发现未来函数风险，但样本数量较少。")).toBeInTheDocument()
     expect(screen.getByText("docs/research-runs/run-test-1/aggregate/final_report.md")).toBeInTheDocument()
   })
