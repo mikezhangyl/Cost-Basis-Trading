@@ -415,6 +415,11 @@ th {
   background: #eee5c7;
 }
 
+.match-na {
+  color: #5c6861;
+  background: #e4e9e5;
+}
+
 .context-panel {
   display: grid;
   gap: 14px;

@@ -25,6 +25,23 @@ from app.services.research_agent_client import ResearchAgentClient
 from app.strategies.candidates import build_research_strategy_signals
 
 
+SCORING_POLICY = {
+    "match_label": {
+        "BUY": "MATCH when forward return is greater than 0, otherwise MISMATCH.",
+        "SELL": "MATCH when forward return is less than 0, otherwise MISMATCH.",
+        "HOLD": "Always labeled NEUTRAL because HOLD makes no directional long or short claim.",
+        "N/A": "Observation unavailable because there are not enough future trading days from the sample start.",
+    },
+    "directional_score": {
+        "BUY": "forward return",
+        "SELL": "negative forward return",
+        "HOLD": "negative absolute forward return, used as opportunity/movement penalty only",
+        "N/A": "excluded from average directional score",
+    },
+    "source": "Project scoring convention derived from the feature-set design note; not a paper threshold.",
+}
+
+
 class ResearchRunService:
     def __init__(
         self,
@@ -356,7 +373,9 @@ def _score_strategy(strategy_id: str, signal: StrategySignal, backtest: Backtest
     match_count = sum(1 for score in observation_scores if score.match_label == "MATCH")
     mismatch_count = sum(1 for score in observation_scores if score.match_label == "MISMATCH")
     neutral_count = sum(1 for score in observation_scores if score.match_label == "NEUTRAL")
-    average_directional_score = sum(score.directional_score for score in observation_scores) / len(observation_scores)
+    unavailable_count = sum(1 for score in observation_scores if score.match_label == "N/A")
+    directional_scores = [score.directional_score for score in observation_scores if score.directional_score is not None]
+    average_directional_score = sum(directional_scores) / len(directional_scores) if directional_scores else 0
     return ResearchStrategyScore(
         strategy_id=strategy_id,
         signal=signal,
@@ -365,10 +384,18 @@ def _score_strategy(strategy_id: str, signal: StrategySignal, backtest: Backtest
         match_count=match_count,
         mismatch_count=mismatch_count,
         neutral_count=neutral_count,
+        unavailable_count=unavailable_count,
     )
 
 
-def _score_observation(action: str, offset_days: int, period_return: float) -> ResearchObservationScore:
+def _score_observation(action: str, offset_days: int, period_return: float | None) -> ResearchObservationScore:
+    if period_return is None:
+        return ResearchObservationScore(
+            offset_days=offset_days,
+            period_return=None,
+            match_label="N/A",
+            directional_score=None,
+        )
     if action == "BUY":
         match_label = "MATCH" if period_return > 0 else "MISMATCH"
         directional_score = period_return
@@ -399,6 +426,7 @@ def _aggregate_scores(samples: list[ResearchSampleResult]) -> list[ResearchAggre
             match_count=sum(score.match_count for score in scores),
             mismatch_count=sum(score.mismatch_count for score in scores),
             neutral_count=sum(score.neutral_count for score in scores),
+            unavailable_count=sum(score.unavailable_count for score in scores),
         )
         for strategy_id, scores in grouped.items()
     ]
@@ -416,6 +444,7 @@ def _build_ai_payload(
         "ts_code": ts_code,
         "window_days": request.window_days,
         "observation_offsets": OBSERVATION_OFFSETS,
+        "scoring_policy": SCORING_POLICY,
         "sample_count": len(samples),
         "candidate_strategy_ids": request.candidate_strategy_ids,
         "aggregate_scores": [score.model_dump(mode="json") for score in aggregate_scores],

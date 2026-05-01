@@ -354,9 +354,14 @@ function BacktestSummaryView({ backtest }: { backtest: BacktestResponse }) {
       <div className="metric-grid">
         <Metric label="Suggestion" value={backtest.signal.action} tone={signalTone(backtest.signal.action)} />
         <Metric label="Confidence" value={formatPercent(backtest.signal.confidence)} />
-        <Metric label="N+1" value={formatObservationReturn(backtest, 1)} tone={observationTone(backtest, 1)} />
-        <Metric label="N+3" value={formatObservationReturn(backtest, 3)} tone={observationTone(backtest, 3)} />
-        <Metric label="N+5" value={formatObservationReturn(backtest, 5)} tone={observationTone(backtest, 5)} />
+        {backtest.observations.map((observation) => (
+          <Metric
+            key={observation.offset_days}
+            label={`N+${observation.offset_days}`}
+            value={formatObservationReturn(observation.period_return)}
+            tone={observationTone(observation.period_return)}
+          />
+        ))}
         <Metric label="Chip rows" value={String(backtest.row_counts.chip_points ?? 0)} />
       </div>
 
@@ -383,11 +388,11 @@ function BacktestSummaryView({ backtest }: { backtest: BacktestResponse }) {
             {backtest.observations.map((observation) => (
               <tr key={observation.offset_days}>
                 <td>N+{observation.offset_days}</td>
-                <td>{observation.observation_date}</td>
+                <td>{observation.observation_date ?? "N/A"}</td>
                 <td>{formatNumber(observation.observation_close)}</td>
                 <td>{formatSignedPercent(observation.period_return)}</td>
                 <td>
-                  <span className={`match-label match-${observation.match_label.toLowerCase()}`}>
+                  <span className={`match-label ${matchLabelClass(observation.match_label)}`}>
                     {matchLabelText(observation.match_label)}
                   </span>
                 </td>
@@ -426,6 +431,10 @@ function ResearchRunView({ researchRun }: { researchRun: ResearchRunResponse }) 
             <ContextItem label="Report" value={researchRun.ai_review.artifact_refs.report} />
           </div>
         </section>
+        <p className="muted-text">
+          回测口径：BUY 后续收益为正记为匹配，SELL 后续收益为负记为匹配；HOLD 不表达方向性，因此观察结果记为中性，
+          方向分使用后续涨跌幅绝对值的负数作为机会成本/波动惩罚。
+        </p>
         <table>
           <thead>
             <tr>
@@ -435,6 +444,7 @@ function ResearchRunView({ researchRun }: { researchRun: ResearchRunResponse }) 
               <th>Match</th>
               <th>Mismatch</th>
               <th>Neutral</th>
+              <th>N/A</th>
             </tr>
           </thead>
           <tbody>
@@ -446,6 +456,7 @@ function ResearchRunView({ researchRun }: { researchRun: ResearchRunResponse }) 
                 <td>{score.match_count}</td>
                 <td>{score.mismatch_count}</td>
                 <td>{score.neutral_count}</td>
+                <td>{score.unavailable_count}</td>
               </tr>
             ))}
           </tbody>
@@ -553,23 +564,31 @@ function signalTone(action: string) {
   return undefined
 }
 
-function findObservation(backtest: BacktestResponse, offsetDays: number) {
-  return backtest.observations.find((observation) => observation.offset_days === offsetDays)
+function formatObservationReturn(periodReturn: number | null) {
+  if (periodReturn === null) {
+    return "N/A"
+  }
+  return formatSignedPercent(periodReturn)
 }
 
-function formatObservationReturn(backtest: BacktestResponse, offsetDays: number) {
-  return formatSignedPercent(findObservation(backtest, offsetDays)?.period_return)
-}
-
-function observationTone(backtest: BacktestResponse, offsetDays: number) {
-  const observation = findObservation(backtest, offsetDays)
-  if (!observation) {
+function observationTone(periodReturn: number | null) {
+  if (periodReturn === null) {
     return undefined
   }
-  return observation.period_return >= 0 ? "good" : "bad"
+  return periodReturn >= 0 ? "good" : "bad"
+}
+
+function matchLabelClass(label: string) {
+  if (label === "N/A") {
+    return "match-na"
+  }
+  return `match-${label.toLowerCase()}`
 }
 
 function matchLabelText(label: string) {
+  if (label === "N/A") {
+    return "N/A"
+  }
   if (label === "MATCH") {
     return "匹配"
   }

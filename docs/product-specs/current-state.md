@@ -37,10 +37,11 @@ Implemented first backtest behavior:
 
 - single-stock historical window check
 - user enters `YYYYMMDD` start date and window size `M`
-- backend resolves enough trading days to evaluate `N+1`, `N+3`, and `N+5`
+- backend resolves forward trading days for `N+1`, `N+3`, `N+5`, `N+15`, `N+30`, `N+60`, `N+90`, and `N+180`
 - first `M` trading days form the analysis window
 - the `M`th trading day is the signal date
-- observation windows are `N+1`, `N+3`, and `N+5`
+- unavailable future observations are returned as `N/A` instead of failing the whole backtest
+- observation windows are `N+1`, `N+3`, `N+5`, `N+15`, `N+30`, `N+60`, `N+90`, and `N+180`
 - output includes the suggested action, confidence, reason, market context, each observation date, each observation close, each period return, and whether the movement matches the original `BUY` or `SELL` suggestion
 
 Implemented first research-run behavior:
@@ -50,7 +51,7 @@ Implemented first research-run behavior:
 - backend runs each sample as an isolated analysis window
 - each sample freezes candidate strategy signals before scoring future returns
 - initial candidate strategies are `composite_baseline` and `market_context_followthrough`
-- scoring uses `N+1`, `N+3`, and `N+5` directional returns
+- scoring uses available `N+1`, `N+3`, `N+5`, `N+15`, `N+30`, `N+60`, `N+90`, and `N+180` directional returns; `N/A` observations are tracked but excluded from average directional score
 - backend writes trace artifacts under `docs/research-runs/<run_id>/`
 - if `DEEPSEEK_API_KEY` is configured, the optional AI research agent reviews the run through the OpenAI-compatible DeepSeek API and writes aggregate review artifacts
 - API response includes AI review status, model, summary, and review/report artifact references

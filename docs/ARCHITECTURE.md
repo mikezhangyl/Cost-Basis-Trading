@@ -35,12 +35,12 @@
 This first backtest surface is a single-window historical validation, not a portfolio simulator.
 
 1. The user enters one stock code, a start date, and window size `M`.
-2. The backend resolves enough forward trading days for `M + 5`.
+2. The backend attempts to resolve forward trading days through `M + 180`.
 3. The first `M` trading days form the analysis window.
 4. The `M`th trading day is the signal date.
 5. The backend fetches `cyq_chips` and daily price bars for the analysis window.
 6. The same signal strategy used by live scans generates a `BUY`, `HOLD`, or `SELL` recommendation on the signal date.
-7. The `M + 1`, `M + 3`, and `M + 5` trading days are observation checkpoints.
+7. The `M + 1`, `M + 3`, `M + 5`, `M + 15`, `M + 30`, `M + 60`, `M + 90`, and `M + 180` trading days are observation checkpoints when available.
 8. The API returns signal details, market context, each observation close, period return, and match label.
 
 ### Research Run Flow
@@ -49,12 +49,12 @@ This first research-run surface is the implementation seed for the artifact-driv
 
 1. The user enters one stock code, multiple sample start dates, and window size `M`.
 2. The backend creates a `run_id` and writes `run-config.json`.
-3. For each sample start date, the backend resolves enough forward trading days for `M + 5`.
+3. For each sample start date, the backend attempts to resolve forward trading days through `M + 180`.
 4. The first `M` trading days form the analysis window and the `M`th trading day is the signal date.
 5. Data-collection calls are recorded to `api-calls.jsonl`.
 6. Feature artifacts are written under `samples/<sample_id>/features/`.
 7. Candidate Strategy Agent outputs are written as frozen signal artifacts under `samples/<sample_id>/signals/`.
-8. The Backtest Evaluator scores each frozen signal against `N+1`, `N+3`, and `N+5`.
+8. The Backtest Evaluator scores each frozen signal against `N+1`, `N+3`, `N+5`, `N+15`, `N+30`, `N+60`, `N+90`, and `N+180`; unavailable future bars are recorded as `N/A`.
 9. Backtest score artifacts and manifests are written under `samples/<sample_id>/backtest/`.
 10. If `DEEPSEEK_API_KEY` is configured, the optional AI research agent reviews the deterministic run summary through the OpenAI-compatible DeepSeek API.
 11. AI review output is written under `aggregate/ai_review.json`, `aggregate/agent-decisions.jsonl`, and `aggregate/final_report.md`.

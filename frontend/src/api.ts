@@ -59,11 +59,11 @@ export type BacktestResponse = {
   }
   observations: Array<{
     offset_days: number
-    observation_date: string
+    observation_date: string | null
     signal_close: number
-    observation_close: number
-    period_return: number
-    match_label: "MATCH" | "MISMATCH" | "NEUTRAL"
+    observation_close: number | null
+    period_return: number | null
+    match_label: "MATCH" | "MISMATCH" | "NEUTRAL" | "N/A"
     interpretation: string
   }>
   row_counts: Record<string, number>
@@ -95,6 +95,7 @@ export type ResearchRunResponse = {
     match_count: number
     mismatch_count: number
     neutral_count: number
+    unavailable_count: number
   }>
   samples: Array<{
     sample_id: string
@@ -107,14 +108,15 @@ export type ResearchRunResponse = {
       signal: StrategySignal
       observation_scores: Array<{
         offset_days: number
-        period_return: number
-        match_label: "MATCH" | "MISMATCH" | "NEUTRAL"
-        directional_score: number
+        period_return: number | null
+        match_label: "MATCH" | "MISMATCH" | "NEUTRAL" | "N/A"
+        directional_score: number | null
       }>
       average_directional_score: number
       match_count: number
       mismatch_count: number
       neutral_count: number
+      unavailable_count: number
     }>
   }>
 }

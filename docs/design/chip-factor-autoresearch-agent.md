@@ -15,7 +15,7 @@ The system should behave like an automatic research assistant for chip-analysis 
 3. For each sample, collect the first `N` trading days after the sample start date.
 4. Generate chip-change features over those `N` days.
 5. Generate or apply candidate strategy rules.
-6. Observe forward returns at `N+1`, `N+3`, and `N+5`.
+6. Observe forward returns at `N+1`, `N+3`, `N+5`, `N+15`, `N+30`, `N+60`, `N+90`, and `N+180` when available.
 7. Record every API call, feature calculation, agent judgment, backtest result, and final conclusion to disk.
 8. Promote, observe, discard, or invalidate candidate rules based on evidence.
 
@@ -36,7 +36,7 @@ For this project, the equivalent structure is:
 | --- | --- |
 | `program.md` | `chip-factor-research-program.md` or this design document |
 | `train.py` editable surface | candidate factor specs and candidate strategy rules |
-| fixed `val_bpb` metric | fixed `N+1`, `N+3`, `N+5` backtest metrics |
+| fixed `val_bpb` metric | fixed multi-horizon backtest metrics |
 | `results.tsv` | auditable research run result table |
 | keep/discard/crash | promote/observe/discard/invalid |
 | fixed 5-minute training budget | fixed stock universe, date range, sample window, and observation windows |
@@ -48,16 +48,22 @@ Target forward observation windows:
 - `N+1`
 - `N+3`
 - `N+5`
+- `N+15`
+- `N+30`
+- `N+60`
+- `N+90`
+- `N+180`
 
 Reasoning:
 
 - `N+1` captures immediate short-term confirmation or failure.
 - `N+3` captures short swing behavior without drifting too far from the signal.
 - `N+5` captures roughly one trading week after the signal.
+- Longer horizons capture medium-term follow-through and delayed failure cases. Missing future bars are recorded as `N/A`.
 
 Implementation note:
 
-- The first app slice now uses `N+1`, `N+3`, and `N+5` for single-window validation.
+- The app uses fixed multi-horizon validation and records unavailable future observations as `N/A`.
 
 ## Research Scope Inputs
 
@@ -74,7 +80,7 @@ date_range:
   start_date: "20240101"
   end_date: "20241231"
 sample_window_days: 10
-observation_offsets: [1, 3, 5]
+observation_offsets: [1, 3, 5, 15, 30, 60, 90, 180]
 strategy_candidates:
   - retained_accumulation_buy_watch
   - overhead_digestion_hold_to_buy_watch
@@ -127,7 +133,7 @@ created_at: ISO-8601 timestamp
 stock_universe: object
 date_range: object
 sample_window_days: integer
-observation_offsets: [1, 3, 5]
+observation_offsets: [1, 3, 5, 15, 30, 60, 90, 180]
 candidate_rules: list
 baseline_strategy: string
 git_commit: string
@@ -373,7 +379,7 @@ Hard rule:
 
 Responsibility:
 
-- compares candidate signals against `N+1`, `N+3`, and `N+5` outcomes.
+- compares candidate signals against configured multi-horizon outcomes.
 
 Inputs:
 
@@ -477,7 +483,7 @@ The first implementation should be intentionally small:
 1. Manual stock universe.
 2. Manual date range.
 3. Fixed sample window `N`.
-4. Observation windows `[1, 3, 5]`.
+4. Observation windows `[1, 3, 5, 15, 30, 60, 90, 180]`.
 5. One baseline strategy.
 6. One or two candidate rules.
 7. Full audit logs for every API call, feature snapshot, agent decision, and result.

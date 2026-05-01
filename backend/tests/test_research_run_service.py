@@ -69,6 +69,9 @@ class FakeResearchAgentClient:
     def analyze_research_run(self, payload: dict) -> dict:
         assert payload["ts_code"] == "000001.SZ"
         assert payload["sample_count"] == 2
+        assert payload["observation_offsets"] == [1, 3, 5, 15, 30, 60, 90, 180]
+        assert payload["scoring_policy"]["match_label"]["HOLD"].startswith("Always labeled NEUTRAL")
+        assert payload["scoring_policy"]["match_label"]["N/A"].startswith("Observation unavailable")
         return {
             "status": "completed",
             "model": "fake-agent",
@@ -107,7 +110,7 @@ def test_research_run_service_scores_strategies_and_writes_artifacts(tmp_path: P
     assert result.ts_code == "000001.SZ"
     assert result.stock_name == "平安银行"
     assert result.sample_count == 2
-    assert result.observation_offsets == [1, 3, 5]
+    assert result.observation_offsets == [1, 3, 5, 15, 30, 60, 90, 180]
     assert {score.strategy_id for score in result.aggregate_scores} == {
         "composite_baseline",
         "market_context_followthrough",
@@ -144,6 +147,10 @@ def test_research_run_service_scores_strategies_and_writes_artifacts(tmp_path: P
     score_payload = json.loads((first_sample_dir / "backtest" / "backtest_score.json").read_text())
     assert len(score_payload["strategy_scores"]) == 2
     assert score_payload["strategy_scores"][0]["observation_scores"][0]["offset_days"] == 1
+    assert score_payload["strategy_scores"][0]["observation_scores"][-1]["match_label"] == "N/A"
+    assert score_payload["strategy_scores"][0]["observation_scores"][-1]["period_return"] is None
+    assert score_payload["strategy_scores"][0]["observation_scores"][-1]["directional_score"] is None
+    assert score_payload["strategy_scores"][0]["unavailable_count"] == 5
 
     report_text = (run_dir / "aggregate" / "final_report.md").read_text()
     assert "本次研究流程完成" in report_text

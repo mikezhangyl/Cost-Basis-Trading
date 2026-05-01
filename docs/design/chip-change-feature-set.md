@@ -48,7 +48,7 @@ Window semantics:
 - `analysis_days`: the first `N` resolved trading days from the selected start date.
 - `signal_date`: the `N`th trading day.
 - Feature deltas are calculated from the first available chip date in the analysis window to `signal_date`.
-- Future observation windows stay outside this feature layer and remain part of backtest scoring. The target observation offsets for the next research phase are `N+1`, `N+3`, and `N+5`.
+- Future observation windows stay outside this feature layer and remain part of backtest scoring. The target observation offsets are `N+1`, `N+3`, `N+5`, `N+15`, `N+30`, `N+60`, `N+90`, and `N+180`; unavailable future trading days are recorded as `N/A`.
 
 ## Output Shape
 
@@ -419,11 +419,20 @@ Feature extraction itself is not scored. Candidate strategies built on these fea
 
 Minimum scoring per strategy:
 
-| Signal | N+1/N+3/N+5 scoring idea |
+| Signal | Multi-horizon scoring idea |
 | --- | --- |
 | `BUY` | Match if forward return is positive; stronger match if return beats a configurable threshold. |
 | `SELL` | Match if forward return is negative; stronger match if drawdown or negative return appears. |
 | `HOLD` | Do not score as win/loss by default. Track realized absolute return and drawdown separately. |
+
+Current implementation detail:
+
+- `BUY`: `period_return > 0` is `MATCH`; `period_return <= 0` is `MISMATCH`; directional score is `period_return`.
+- `SELL`: `period_return < 0` is `MATCH`; `period_return >= 0` is `MISMATCH`; directional score is `-period_return`.
+- `HOLD`: always labeled `NEUTRAL` because it makes no directional claim; directional score is `-abs(period_return)` as an opportunity-cost or movement penalty.
+- `N/A`: used when the future trading day for an offset does not exist in the resolved data; excluded from average directional score.
+
+This `NEUTRAL` rule is a project scoring convention, not a broker-paper threshold. Future strategy research should decide whether `HOLD` deserves a separate quality score based on avoided drawdown, low volatility, or opportunity cost.
 
 Suggested validation metrics:
 

@@ -110,6 +110,32 @@ class FakeBacktestClient:
         ]
 
 
+class MissingFuturePriceBacktestClient(FakeBacktestClient):
+    def resolve_trading_days_from(self, start_date: str, n_days: int) -> list[str]:
+        return [f"202605{day:02d}" for day in range(1, min(n_days, 31) + 1)]
+
+    def get_daily_prices(self, ts_code: str, start_date: str, end_date: str) -> list[DailyPriceBar]:
+        return [
+            DailyPriceBar(
+                ts_code=ts_code,
+                trade_date=f"202605{day:02d}",
+                open=10 + day,
+                high=10.5 + day,
+                low=9.5 + day,
+                close=10 + day,
+                vol=1000,
+                amount=10000,
+            )
+            for day in range(1, 11)
+        ]
+
+    def get_chip_distribution(self, ts_code: str, start_date: str, end_date: str) -> list[ChipDistributionPoint]:
+        return [
+            ChipDistributionPoint(ts_code=ts_code, trade_date=f"202605{day:02d}", price=10 + day, percent=30)
+            for day in range(1, 6)
+        ]
+
+
 def test_backtest_service_evaluates_single_window_and_forward_observations() -> None:
     service = BacktestService(FakeBacktestClient())
 
@@ -126,12 +152,20 @@ def test_backtest_service_evaluates_single_window_and_forward_observations() -> 
     assert result.window_days == 5
     assert result.analysis_range == {"start_date": "20260401", "end_date": "20260408"}
     assert result.signal_date == "20260408"
-    assert [observation.offset_days for observation in result.observations] == [1, 3, 5]
+    assert [observation.offset_days for observation in result.observations] == [1, 3, 5, 15, 30, 60, 90, 180]
     assert result.signal.action == "HOLD"
     assert result.observations[0].signal_close == 104
     assert result.observations[0].observation_close == 108
     assert result.observations[0].period_return == 0.038461538461538464
     assert result.observations[0].match_label == "NEUTRAL"
+    assert result.observations[3].offset_days == 15
+    assert result.observations[3].observation_date == "20260429"
+    assert result.observations[4].offset_days == 30
+    assert result.observations[4].match_label == "N/A"
+    assert result.observations[4].observation_date is None
+    assert result.observations[4].observation_close is None
+    assert result.observations[4].period_return is None
+    assert result.observations[4].interpretation == "N+30 未来交易日不足，暂无法观察。"
     assert result.market_context.price_return == 0.04
     assert result.market_context.volume_ratio_5 == 1.3636363636363635
     assert result.market_context.amount_ratio_5 == 1.3636363636363635
@@ -140,3 +174,23 @@ def test_backtest_service_evaluates_single_window_and_forward_observations() -> 
     assert result.market_context.doji_count == 0
     assert result.market_context.bullish_candle_count == 5
     assert result.market_context.bearish_candle_count == 0
+
+
+def test_backtest_service_marks_observation_na_when_future_price_bar_is_missing() -> None:
+    service = BacktestService(MissingFuturePriceBacktestClient())
+
+    result = service.run(
+        BacktestRequest(
+            stock_code="000001",
+            start_date="20260501",
+            window_days=5,
+        )
+    )
+
+    assert result.observations[0].offset_days == 1
+    assert result.observations[0].observation_date == "20260506"
+    assert result.observations[0].period_return is not None
+    assert result.observations[3].offset_days == 15
+    assert result.observations[3].observation_date is None
+    assert result.observations[3].period_return is None
+    assert result.observations[3].match_label == "N/A"

@@ -26,14 +26,14 @@ Short explanation:
 
 ## Capability
 
-For one stock and many sample start dates, the system can run multiple candidate strategies against a fixed historical experiment definition. Each strategy sees only the first `N` trading days of a sample, emits a frozen signal, and is later scored against `N+1`, `N+3`, and `N+5` outcomes. Every data request, feature snapshot, agent judgment, backtest score, review note, and final conclusion is written to disk.
+For one stock and many sample start dates, the system can run multiple candidate strategies against a fixed historical experiment definition. Each strategy sees only the first `N` trading days of a sample, emits a frozen signal, and is later scored against `N+1`, `N+3`, `N+5`, `N+15`, `N+30`, `N+60`, `N+90`, and `N+180` outcomes when those future trading days exist. Unavailable future observations are recorded as `N/A`. Every data request, feature snapshot, agent judgment, backtest score, review note, and final conclusion is written to disk.
 
 This first capability is intentionally scoped:
 
 - one stock at a time,
 - multiple sample start dates,
 - fixed sample window `N`,
-- fixed observation offsets `[1, 3, 5]`,
+- fixed observation offsets `[1, 3, 5, 15, 30, 60, 90, 180]`,
 - multiple candidate strategies,
 - auditable run artifacts.
 
@@ -228,7 +228,7 @@ Responsibilities:
 
 - read frozen strategy signals,
 - read future bars after the signal is frozen,
-- calculate returns at `N+1`, `N+3`, and `N+5`,
+- calculate returns at `N+1`, `N+3`, `N+5`, `N+15`, `N+30`, `N+60`, `N+90`, and `N+180` when available,
 - score strategy behavior,
 - produce comparable metrics.
 
@@ -372,7 +372,7 @@ Minimum fields:
   "date_coverage": {
     "analysis_start": "20260302",
     "signal_date": "20260313",
-    "future_offsets": [1, 3, 5]
+    "future_offsets": [1, 3, 5, 15, 30, 60, 90, 180]
   },
   "checksum": {
     "feature_set.json": "sha256:<hex>"
@@ -422,7 +422,7 @@ Backtest Evaluator readiness:
 ```text
 All required signal manifests are completed or explicitly invalid
 AND each completed signal has action, confidence, reason, and used_features
-AND future observation bars exist for N+1, N+3, and N+5
+AND future observation bars are present or explicitly marked N/A for all configured offsets
 AND signal artifacts are frozen
 ```
 
@@ -565,5 +565,5 @@ This design is ready for implementation planning. The next implementation plan s
 - manifest writer and validator,
 - orchestrator state transitions,
 - one deterministic candidate strategy registry,
-- `N+1`/`N+3`/`N+5` scoring,
+- multi-horizon scoring with N/A handling,
 - browser UI for selecting one stock and multiple start dates.

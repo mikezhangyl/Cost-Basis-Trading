@@ -98,6 +98,15 @@ const backtestResponse = {
         period_return: -0.02,
         match_label: "MISMATCH",
         interpretation: "N+5 下跌，买入建议阶段未得到验证。"
+      },
+      {
+        offset_days: 15,
+        observation_date: null,
+        signal_close: 1400,
+        observation_close: null,
+        period_return: null,
+        match_label: "N/A",
+        interpretation: "N+15 未来交易日不足，暂无法观察。"
       }
     ],
     row_counts: { chip_points: 900, price_bars: 10 }
@@ -113,7 +122,7 @@ const researchRunResponse = {
     ts_code: "000001.SZ",
     stock_name: "平安银行",
     window_days: 10,
-    observation_offsets: [1, 3, 5],
+    observation_offsets: [1, 3, 5, 15, 30, 60, 90, 180],
     sample_count: 2,
     artifact_dir: "docs/research-runs/run-test-1",
     ai_review: {
@@ -134,6 +143,7 @@ const researchRunResponse = {
         match_count: 3,
         mismatch_count: 1,
         neutral_count: 2,
+        unavailable_count: 10,
       },
       {
         strategy_id: "market_context_followthrough",
@@ -142,6 +152,7 @@ const researchRunResponse = {
         match_count: 4,
         mismatch_count: 1,
         neutral_count: 1,
+        unavailable_count: 10,
       }
     ],
     samples: [
@@ -164,12 +175,14 @@ const researchRunResponse = {
             observation_scores: [
               { offset_days: 1, period_return: -0.001, match_label: "NEUTRAL", directional_score: -0.001 },
               { offset_days: 3, period_return: 0.003, match_label: "NEUTRAL", directional_score: -0.003 },
-              { offset_days: 5, period_return: -0.014, match_label: "NEUTRAL", directional_score: -0.014 }
+              { offset_days: 5, period_return: -0.014, match_label: "NEUTRAL", directional_score: -0.014 },
+              { offset_days: 15, period_return: null, match_label: "N/A", directional_score: null }
             ],
             average_directional_score: -0.006,
             match_count: 0,
             mismatch_count: 0,
             neutral_count: 3,
+            unavailable_count: 1,
           }
         ]
       }
@@ -260,6 +273,7 @@ describe("App", () => {
     expect(screen.getAllByText("+1.00%").length).toBeGreaterThan(0)
     expect(screen.getAllByText("+2.00%").length).toBeGreaterThan(0)
     expect(screen.getAllByText("-2.00%").length).toBeGreaterThan(0)
+    expect(screen.getAllByText("N/A").length).toBeGreaterThan(0)
     expect(screen.getByText("600519.SH 贵州茅台")).toBeInTheDocument()
     expect(screen.getByText(/分析区间：20260101 至 20260114/)).toBeInTheDocument()
     expect(screen.getAllByText("匹配")).toHaveLength(2)
@@ -271,6 +285,7 @@ describe("App", () => {
     expect(screen.getByText("阳线/阴线")).toBeInTheDocument()
     expect(screen.getByText("7 / 2")).toBeInTheDocument()
     expect(screen.getByText("N+5 下跌，买入建议阶段未得到验证。")).toBeInTheDocument()
+    expect(screen.getByText("N+15 未来交易日不足，暂无法观察。")).toBeInTheDocument()
   })
 
   it("runs a research workflow and renders strategy scores with artifact path", async () => {
@@ -292,6 +307,7 @@ describe("App", () => {
     expect(await screen.findByText("run-test-1")).toBeInTheDocument()
     expect(screen.getByText("000001.SZ 平安银行")).toBeInTheDocument()
     expect(screen.getByText("2 samples / 10 days")).toBeInTheDocument()
+    expect(screen.getByText("N+1 / N+3 / N+5 / N+15 / N+30 / N+60 / N+90 / N+180")).toBeInTheDocument()
     expect(screen.getByText("market_context_followthrough")).toBeInTheDocument()
     expect(screen.getByText("+1.80%")).toBeInTheDocument()
     expect(screen.getByText("docs/research-runs/run-test-1")).toBeInTheDocument()

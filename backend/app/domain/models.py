@@ -147,11 +147,11 @@ class ScanResponse(BaseModel):
 
 class BacktestObservationPoint(BaseModel):
     offset_days: int
-    observation_date: str
+    observation_date: str | None
     signal_close: float
-    observation_close: float
-    period_return: float
-    match_label: Literal["MATCH", "MISMATCH", "NEUTRAL"]
+    observation_close: float | None
+    period_return: float | None
+    match_label: Literal["MATCH", "MISMATCH", "NEUTRAL", "N/A"]
     interpretation: str
 
 
@@ -214,9 +214,9 @@ class BacktestResponse(BaseModel):
 
 class ResearchObservationScore(BaseModel):
     offset_days: int
-    period_return: float
-    match_label: Literal["MATCH", "MISMATCH", "NEUTRAL"]
-    directional_score: float
+    period_return: float | None
+    match_label: Literal["MATCH", "MISMATCH", "NEUTRAL", "N/A"]
+    directional_score: float | None
 
 
 class ResearchStrategyScore(BaseModel):
@@ -227,6 +227,7 @@ class ResearchStrategyScore(BaseModel):
     match_count: int
     mismatch_count: int
     neutral_count: int
+    unavailable_count: int
 
 
 class ResearchAggregateScore(BaseModel):
@@ -236,6 +237,7 @@ class ResearchAggregateScore(BaseModel):
     match_count: int
     mismatch_count: int
     neutral_count: int
+    unavailable_count: int
 
 
 class ResearchSampleResult(BaseModel):

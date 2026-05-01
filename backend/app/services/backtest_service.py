@@ -14,7 +14,7 @@ from app.strategies.composite import evaluate_composite_signal
 from app.strategies.features import build_market_features
 from app.strategies.market_context import build_market_context
 
-OBSERVATION_OFFSETS = [1, 3, 5]
+OBSERVATION_OFFSETS = [1, 3, 5, 15, 30, 60, 90, 180]
 
 
 class BacktestMarketDataClient(Protocol):
@@ -39,15 +39,15 @@ class BacktestService:
         ts_code = normalize_ts_code(request.stock_code)
         required_days = request.window_days + max(OBSERVATION_OFFSETS)
         trading_days = self.market_data_client.resolve_trading_days_from(request.start_date, required_days)
-        if len(trading_days) < required_days:
+        if len(trading_days) < request.window_days:
             raise DataUnavailableError(DataErrorCode.EMPTY_DATA, "Not enough trading days for requested window.")
         analysis_days = trading_days[: request.window_days]
         signal_date = analysis_days[-1]
         observation_dates = {
-            offset: trading_days[request.window_days - 1 + offset]
+            offset: _observation_date(trading_days, request.window_days, offset)
             for offset in OBSERVATION_OFFSETS
         }
-        final_observation_date = observation_dates[max(OBSERVATION_OFFSETS)]
+        final_observation_date = _last_available_observation_date(observation_dates, signal_date)
         stock_name = self.market_data_client.get_stock_name(ts_code)
         prices = sorted(
             self.market_data_client.get_daily_prices(ts_code, analysis_days[0], final_observation_date),
@@ -62,7 +62,7 @@ class BacktestService:
         signal = evaluate_composite_signal(build_market_features(ts_code, chips, analysis_prices))
         market_context = build_market_context(analysis_prices)
         observations = [
-            _build_observation(signal.action, signal_bar, _bar_for_date(prices, observation_date), offset)
+            _build_observation(signal.action, signal_bar, _optional_bar_for_date(prices, observation_date), offset)
             for offset, observation_date in observation_dates.items()
         ]
         return BacktestResponse.create(
@@ -85,6 +85,18 @@ def _safe_return(start_value: float, end_value: float) -> float:
     return (end_value - start_value) / start_value
 
 
+def _observation_date(trading_days: list[str], window_days: int, offset_days: int) -> str | None:
+    observation_index = window_days - 1 + offset_days
+    if observation_index >= len(trading_days):
+        return None
+    return trading_days[observation_index]
+
+
+def _last_available_observation_date(observation_dates: dict[int, str | None], fallback_date: str) -> str:
+    available_dates = [date for date in observation_dates.values() if date is not None]
+    return available_dates[-1] if available_dates else fallback_date
+
+
 def _bar_for_date(prices: list[DailyPriceBar], trade_date: str) -> DailyPriceBar:
     for bar in prices:
         if bar.trade_date == trade_date:
@@ -92,12 +104,31 @@ def _bar_for_date(prices: list[DailyPriceBar], trade_date: str) -> DailyPriceBar
     raise DataUnavailableError(DataErrorCode.EMPTY_DATA, f"Missing price bar for {trade_date}.")
 
 
+def _optional_bar_for_date(prices: list[DailyPriceBar], trade_date: str | None) -> DailyPriceBar | None:
+    if trade_date is None:
+        return None
+    for bar in prices:
+        if bar.trade_date == trade_date:
+            return bar
+    return None
+
+
 def _build_observation(
     action: str,
     signal_bar: DailyPriceBar,
-    observation_bar: DailyPriceBar,
+    observation_bar: DailyPriceBar | None,
     offset_days: int,
 ) -> BacktestObservationPoint:
+    if observation_bar is None:
+        return BacktestObservationPoint(
+            offset_days=offset_days,
+            observation_date=None,
+            signal_close=signal_bar.close,
+            observation_close=None,
+            period_return=None,
+            match_label="N/A",
+            interpretation=f"N+{offset_days} 未来交易日不足，暂无法观察。",
+        )
     period_return = _safe_return(signal_bar.close, observation_bar.close)
     match_label = _match_label(action, period_return)
     return BacktestObservationPoint(
