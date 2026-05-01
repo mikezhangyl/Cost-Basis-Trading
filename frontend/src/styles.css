@@ -480,6 +480,34 @@ th {
   background: #fbfcf8;
 }
 
+.observation-coverage {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(36, 54, 44, 0.14);
+  background: #f6f8f4;
+}
+
+.observation-coverage h4 {
+  margin: 0 0 6px;
+  color: #25342c;
+  font-size: 0.9rem;
+}
+
+.coverage-table {
+  min-width: 1180px;
+}
+
+.coverage-cell {
+  display: grid;
+  gap: 7px;
+  justify-items: start;
+}
+
+.coverage-cell strong {
+  font-size: 0.88rem;
+}
+
 .trade-list,
 .backtest-detail {
   overflow-x: auto;

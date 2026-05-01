@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react"
+import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -181,7 +181,11 @@ const researchRunResponse = {
               { offset_days: 1, period_return: -0.001, match_label: "NEUTRAL", directional_score: -0.001 },
               { offset_days: 3, period_return: 0.003, match_label: "NEUTRAL", directional_score: -0.003 },
               { offset_days: 5, period_return: -0.014, match_label: "NEUTRAL", directional_score: -0.014 },
-              { offset_days: 15, period_return: null, match_label: "N/A", directional_score: null }
+              { offset_days: 15, period_return: null, match_label: "N/A", directional_score: null },
+              { offset_days: 30, period_return: 0.0527, match_label: "NEUTRAL", directional_score: -0.0527 },
+              { offset_days: 60, period_return: 0.1227, match_label: "NEUTRAL", directional_score: -0.1227 },
+              { offset_days: 90, period_return: 0.0655, match_label: "NEUTRAL", directional_score: -0.0655 },
+              { offset_days: 180, period_return: 0.0064, match_label: "NEUTRAL", directional_score: -0.0064 }
             ],
             average_directional_score: -0.006,
             match_count: 0,
@@ -323,6 +327,15 @@ describe("App", () => {
     expect(screen.getByText("N+15 / N+30")).toBeInTheDocument()
     expect(screen.getByText("未发现未来函数风险，但样本数量较少。")).toBeInTheDocument()
     expect(screen.getByText("docs/research-runs/run-test-1/aggregate/final_report.md")).toBeInTheDocument()
+    const coverage = screen.getByLabelText("Observation coverage")
+    expect(within(coverage).getByText("Observation coverage")).toBeInTheDocument()
+    for (const offset of ["N+1", "N+3", "N+5", "N+15", "N+30", "N+60", "N+90", "N+180"]) {
+      expect(within(coverage).getByRole("columnheader", { name: offset })).toBeInTheDocument()
+    }
+    expect(screen.getByText("000001.SZ-20260301-N10 / composite_baseline")).toBeInTheDocument()
+    expect(screen.getByText("-0.10%")).toBeInTheDocument()
+    expect(screen.getByText("+12.27%")).toBeInTheDocument()
+    expect(screen.getAllByText("NEUTRAL").length).toBeGreaterThan(0)
   })
 
   it("shows a readable error when research workflow returns an empty response", async () => {

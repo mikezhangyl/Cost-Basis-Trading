@@ -478,6 +478,7 @@ function ResearchRunView({ researchRun }: { researchRun: ResearchRunResponse }) 
             ))}
           </tbody>
         </table>
+        <ObservationCoverageTable researchRun={researchRun} />
         <table>
           <thead>
             <tr>
@@ -502,6 +503,61 @@ function ResearchRunView({ researchRun }: { researchRun: ResearchRunResponse }) 
         </table>
       </div>
     </div>
+  )
+}
+
+function ObservationCoverageTable({ researchRun }: { researchRun: ResearchRunResponse }) {
+  return (
+    <section className="observation-coverage" aria-label="Observation coverage">
+      <div>
+        <h4>Observation coverage</h4>
+        <p className="muted-text">每个样本在信号冻结后，对所有配置观察点的收益与评分标签。</p>
+      </div>
+      <div className="table-wrap">
+        <table className="coverage-table">
+          <thead>
+            <tr>
+              <th>Sample / Strategy</th>
+              <th>Action</th>
+              <th>Confidence</th>
+              {researchRun.observation_offsets.map((offset) => (
+                <th key={offset}>N+{offset}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {researchRun.samples.flatMap((sample) =>
+              sample.strategies.map((strategy) => (
+                <tr key={`${sample.sample_id}-${strategy.strategy_id}`}>
+                  <td className="code-cell">{sample.sample_id} / {strategy.strategy_id}</td>
+                  <td>
+                    <span className={`signal signal-${strategy.signal.action.toLowerCase()}`}>{strategy.signal.action}</span>
+                  </td>
+                  <td>{formatPercent(strategy.signal.confidence)}</td>
+                  {researchRun.observation_offsets.map((offset) => {
+                    const score = strategy.observation_scores.find((observation) => observation.offset_days === offset)
+                    return (
+                      <td key={offset}>
+                        {score ? (
+                          <div className="coverage-cell">
+                            <strong>{formatObservationReturn(score.period_return)}</strong>
+                            <span className={`match-label ${matchLabelClass(score.match_label)}`}>
+                              {score.match_label}
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="muted-text">-</span>
+                        )}
+                      </td>
+                    )
+                  })}
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
   )
 }
 
