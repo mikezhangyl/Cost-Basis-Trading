@@ -35,6 +35,15 @@ REQUIRED_FACTOR_BATCH_FILES = [
     "factor-batch-summary.json",
     "aggregate-factor-report.md",
 ]
+REQUIRED_FACTOR_REDUNDANCY_REVIEW_FILES = [
+    "review-config.json",
+    "source-data-manifest.json",
+    "review-events.jsonl",
+    "cross-object-redundancy-summary.json",
+    "pooled-diagnostics.json",
+    "factor-redundancy-groups.json",
+    "factor-redundancy-report.md",
+]
 EXPECTED_OBSERVATION_OFFSETS = [1, 3, 5, 15, 30, 60, 90, 180]
 EXPECTED_BATCH_DIRECTIONS = {
     "HIGH_FACTOR_OUTPERFORMS_ALL",
@@ -122,12 +131,14 @@ class EccArtifactReviewer:
         research_run_root: Path | None = None,
         factor_run_root: Path | None = None,
         factor_batch_root: Path | None = None,
+        factor_redundancy_review_root: Path | None = None,
         plan_doc_paths: list[Path] | None = None,
         review_client: ArtifactReviewClient | None = None,
     ) -> None:
         self.research_run_root = research_run_root or default_research_run_root()
         self.factor_run_root = factor_run_root or default_factor_run_root()
         self.factor_batch_root = factor_batch_root or default_factor_batch_root()
+        self.factor_redundancy_review_root = factor_redundancy_review_root or default_factor_redundancy_review_root()
         self.plan_doc_paths = plan_doc_paths or default_plan_doc_paths()
         self.review_client = review_client
 
@@ -219,6 +230,120 @@ class EccArtifactReviewer:
             {
                 "review_id": review_id,
                 "run_id": safe_run_id,
+                "status": status,
+                "primary_reviewer": "ecc_quality_subagent",
+                "quality_subagent_semantic_review": "pending",
+                "external_reviewer": external_result.get("provider", "none"),
+                "findings_count": result.findings_count,
+                "approval_required": result.approval_required,
+            },
+        )
+        _write_json(review_dir.parent / "latest.json", asdict(result))
+        _append_event(events_path, review_id, "write_artifact_review", "completed", {"status": status})
+        return result
+
+    def review_factor_redundancy_review(self, redundancy_review_id: str) -> ArtifactReviewResult:
+        safe_review_id = _validate_simple_name(redundancy_review_id)
+        review_id = _build_review_id()
+        redundancy_review_dir = self.factor_redundancy_review_root / safe_review_id
+        if not redundancy_review_dir.exists():
+            raise FileNotFoundError(str(redundancy_review_dir))
+        review_dir = _build_review_dir(redundancy_review_dir, review_id)
+        review_dir.mkdir(parents=True, exist_ok=True)
+        events_path = review_dir / "workflow-events.jsonl"
+
+        _append_event(events_path, review_id, "load_plan_context", "started")
+        plan_snapshot = collect_plan_snapshot(self.plan_doc_paths)
+        _write_json(review_dir / "plan-snapshot.json", plan_snapshot)
+        _append_event(events_path, review_id, "load_plan_context", "completed", {"document_count": len(plan_snapshot["documents"])})
+
+        _append_event(events_path, review_id, "load_factor_redundancy_review_artifacts", "started")
+        source_artifacts = collect_factor_redundancy_review_source_artifacts(redundancy_review_dir)
+        _write_json(review_dir / "source-artifacts.json", source_artifacts)
+        _append_event(
+            events_path,
+            review_id,
+            "load_factor_redundancy_review_artifacts",
+            "completed",
+            {"artifact_count": len(source_artifacts["paths"])},
+        )
+
+        _append_event(events_path, review_id, "deterministic_artifact_check", "started")
+        deterministic_findings = _build_factor_redundancy_review_deterministic_findings(source_artifacts)
+        _append_event(
+            events_path,
+            review_id,
+            "deterministic_artifact_check",
+            "completed",
+            {"findings_count": len(deterministic_findings)},
+        )
+
+        quality_prompt = _build_quality_subagent_review_prompt(
+            review_id,
+            safe_review_id,
+            review_dir,
+            deterministic_findings,
+            artifact_label="Factor Redundancy Review",
+        )
+        _write_text(review_dir / "quality-subagent-review-prompt.md", quality_prompt)
+
+        _append_event(events_path, review_id, "external_artifact_review", "started")
+        payload = _build_factor_redundancy_review_external_review_payload(
+            review_id,
+            safe_review_id,
+            plan_snapshot,
+            source_artifacts,
+            deterministic_findings,
+        )
+        external_result = self._run_external_review_payload(review_dir, review_id, payload)
+        external_findings = list(external_result.get("findings", []))
+        _append_event(events_path, review_id, "external_artifact_review", "completed", {"findings_count": len(external_findings)})
+
+        findings_payload = _findings_payload(review_id, safe_review_id, deterministic_findings, external_findings)
+        _write_json(review_dir / "findings.json", findings_payload)
+        _write_text(
+            review_dir / "artifact-review-report.md",
+            _build_report(
+                review_id,
+                safe_review_id,
+                deterministic_findings,
+                external_result,
+                external_findings=external_findings,
+                artifact_label="Factor Redundancy Review",
+            ),
+        )
+        _write_text(review_dir / "fix-plan-draft.md", _build_fix_plan(review_id, safe_review_id, findings_payload["findings"]))
+
+        status = "needs_fix" if findings_payload["findings"] else "passed"
+        result = ArtifactReviewResult(
+            review_id=review_id,
+            run_id=safe_review_id,
+            status=status,
+            artifact_dir=str(review_dir),
+            findings_count=len(findings_payload["findings"]),
+            approval_required=status == "needs_fix",
+            artifact_refs=_build_artifact_refs(review_dir),
+        )
+        _write_json(
+            review_dir / "review-config.json",
+            {
+                "review_id": review_id,
+                "run_id": safe_review_id,
+                "reviewer": "ECC Artifact Reviewer",
+                "primary_reviewer": "ecc_quality_subagent",
+                "external_reviewer": external_result.get("provider", "none"),
+                "storage": "run_local",
+                "artifact_type": "factor_redundancy_review",
+                "factor_redundancy_review_dir": str(redundancy_review_dir),
+                "artifact_dir": str(review_dir),
+                "plan_doc_paths": [str(path) for path in self.plan_doc_paths],
+            },
+        )
+        _write_json(
+            review_dir / "review-state.json",
+            {
+                "review_id": review_id,
+                "run_id": safe_review_id,
                 "status": status,
                 "primary_reviewer": "ecc_quality_subagent",
                 "quality_subagent_semantic_review": "pending",
@@ -525,6 +650,10 @@ def default_factor_batch_root() -> Path:
     return Path(__file__).resolve().parents[1] / "docs" / "factor-batches"
 
 
+def default_factor_redundancy_review_root() -> Path:
+    return Path(__file__).resolve().parents[1] / "docs" / "factor-redundancy-reviews"
+
+
 def default_plan_doc_paths() -> list[Path]:
     repo_root = Path(__file__).resolve().parents[1]
     return [
@@ -618,6 +747,72 @@ def collect_factor_batch_source_artifacts(batch_dir: Path) -> dict[str, Any]:
         "stock_results_log": _load_jsonl(stock_results_path) if stock_results_path.exists() else [],
         "paths": [str(batch_dir / file) for file in REQUIRED_FACTOR_BATCH_FILES] + [str(path) for path in optional_paths],
     }
+
+
+def collect_factor_redundancy_review_source_artifacts(review_dir: Path) -> dict[str, Any]:
+    for required_file in REQUIRED_FACTOR_REDUNDANCY_REVIEW_FILES:
+        path = review_dir / required_file
+        if not path.exists():
+            raise FileNotFoundError(str(path))
+
+    manifest = _load_json(review_dir / "source-data-manifest.json")
+    per_instrument_artifacts = []
+    for instrument in manifest.get("instruments", []):
+        instrument_id = str(instrument.get("instrument_id"))
+        instrument_dir = review_dir / "per-instrument" / instrument_id
+        per_instrument_artifacts.append(
+            {
+                "instrument_id": instrument_id,
+                "dir": str(instrument_dir),
+                "correlation_matrix": _file_presence(instrument_dir / "factor-correlation-matrix.csv"),
+                "pair_relationships": _json_file_summary(instrument_dir / "factor-pair-relationships.json"),
+                "retention_decisions": _json_file_summary(instrument_dir / "factor-retention-decisions.json"),
+            }
+        )
+    required_paths = [review_dir / file for file in REQUIRED_FACTOR_REDUNDANCY_REVIEW_FILES]
+    instrument_paths = [
+        Path(str(item["correlation_matrix"]["path"]))
+        for item in per_instrument_artifacts
+        if item["correlation_matrix"].get("path")
+    ]
+    instrument_paths.extend(
+        Path(str(item["pair_relationships"]["path"]))
+        for item in per_instrument_artifacts
+        if item["pair_relationships"].get("path")
+    )
+    instrument_paths.extend(
+        Path(str(item["retention_decisions"]["path"]))
+        for item in per_instrument_artifacts
+        if item["retention_decisions"].get("path")
+    )
+    return {
+        "artifact_type": "factor_redundancy_review",
+        "review_config": _load_json(review_dir / "review-config.json"),
+        "source_manifest": manifest,
+        "review_events": _load_jsonl(review_dir / "review-events.jsonl"),
+        "cross_object_summary": _load_json(review_dir / "cross-object-redundancy-summary.json"),
+        "pooled_diagnostics": _load_json(review_dir / "pooled-diagnostics.json"),
+        "redundancy_groups": _load_json(review_dir / "factor-redundancy-groups.json"),
+        "report": (review_dir / "factor-redundancy-report.md").read_text(encoding="utf-8"),
+        "per_instrument_artifacts": per_instrument_artifacts,
+        "paths": [str(path) for path in required_paths + instrument_paths],
+    }
+
+
+def _file_presence(path: Path) -> dict[str, Any]:
+    payload: dict[str, Any] = {"path": str(path), "exists": path.exists()}
+    if path.exists():
+        payload["sha256"] = _file_checksum(path)
+    return payload
+
+
+def _json_file_summary(path: Path) -> dict[str, Any]:
+    payload = _file_presence(path)
+    if path.exists():
+        content = _load_json(path)
+        payload["content"] = content
+        payload["item_count"] = len(content) if isinstance(content, list) else None
+    return payload
 
 
 def _collect_factor_stock_artifacts(run_dir: Path, run_manifest: dict[str, Any]) -> list[dict[str, Any]]:
@@ -744,10 +939,10 @@ def collect_plan_snapshot(plan_doc_paths: list[Path]) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run ECC Artifact Reviewer against a completed run artifact.")
-    parser.add_argument("--run-id", required=True, help="Run id under docs/research-runs or docs/factor-runs.")
+    parser.add_argument("--run-id", required=True, help="Run id under docs/research-runs, docs/factor-runs, docs/factor-batches, or docs/factor-redundancy-reviews.")
     parser.add_argument(
         "--artifact-type",
-        choices=["research", "factor", "factor-batch"],
+        choices=["research", "factor", "factor-batch", "factor-redundancy-review"],
         default="research",
         help="Artifact type to review. Defaults to research for backward compatibility.",
     )
@@ -770,6 +965,12 @@ def main() -> int:
         help="Directory containing factor batch artifacts. Defaults to docs/factor-batches.",
     )
     parser.add_argument(
+        "--factor-redundancy-review-root",
+        type=Path,
+        default=None,
+        help="Directory containing factor redundancy review artifacts. Defaults to docs/factor-redundancy-reviews.",
+    )
+    parser.add_argument(
         "--external-reviewer",
         choices=["none", "deepseek"],
         default="none",
@@ -783,9 +984,12 @@ def main() -> int:
         research_run_root=args.research_run_root,
         factor_run_root=args.factor_run_root,
         factor_batch_root=args.factor_batch_root,
+        factor_redundancy_review_root=args.factor_redundancy_review_root,
         review_client=client,
     )
-    if args.artifact_type == "factor-batch":
+    if args.artifact_type == "factor-redundancy-review":
+        result = reviewer.review_factor_redundancy_review(args.run_id)
+    elif args.artifact_type == "factor-batch":
         result = reviewer.review_factor_batch(args.run_id)
     elif args.artifact_type == "factor":
         result = reviewer.review_factor_run(args.run_id)
@@ -1336,6 +1540,174 @@ def _build_factor_batch_deterministic_findings(artifacts: dict[str, Any]) -> lis
     return findings
 
 
+def _build_factor_redundancy_review_deterministic_findings(artifacts: dict[str, Any]) -> list[dict[str, Any]]:
+    findings = []
+    config = artifacts.get("review_config", {})
+    manifest = artifacts.get("source_manifest", {})
+    instruments = manifest.get("instruments", [])
+    cross_object_summary = artifacts.get("cross_object_summary", [])
+    pooled_diagnostics = artifacts.get("pooled_diagnostics", [])
+    report = str(artifacts.get("report", ""))
+
+    if config.get("instrument_isolation") is not True:
+        findings.append(
+            _finding(
+                severity="high",
+                category="methodology_violation",
+                title="Factor redundancy review does not declare instrument isolation.",
+                evidence=[f"instrument_isolation={config.get('instrument_isolation')}"],
+                expected="review-config.json should set instrument_isolation=true.",
+                suggested_fix="Regenerate the review with per-instrument correlation enabled.",
+            )
+        )
+    if config.get("raw_pooled_correlation_policy") != "diagnostic_only":
+        findings.append(
+            _finding(
+                severity="high",
+                category="methodology_violation",
+                title="Raw pooled correlation policy is not diagnostic-only.",
+                evidence=[f"raw_pooled_correlation_policy={config.get('raw_pooled_correlation_policy')}"],
+                expected="Raw pooled correlation may only be diagnostic and must not drive exclusion.",
+                suggested_fix="Regenerate the review with raw_pooled_correlation_policy=diagnostic_only.",
+            )
+        )
+    if not instruments:
+        findings.append(
+            _finding(
+                severity="high",
+                category="coverage_gap",
+                title="Factor redundancy review has no source instruments.",
+                evidence=["source-data-manifest.json instruments is empty"],
+                expected="The review should reference at least one investment object.",
+                suggested_fix="Regenerate the review from a completed factor batch or factor run directory.",
+            )
+        )
+
+    instrument_ids = {str(instrument.get("instrument_id")) for instrument in instruments if instrument.get("instrument_id")}
+    per_instrument_artifacts = artifacts.get("per_instrument_artifacts", [])
+    artifact_ids = {str(item.get("instrument_id")) for item in per_instrument_artifacts if item.get("instrument_id")}
+    if instrument_ids != artifact_ids:
+        findings.append(
+            _finding(
+                severity="high",
+                category="traceability_gap",
+                title="Per-instrument artifact set does not match source manifest.",
+                evidence=[f"manifest_instruments={sorted(instrument_ids)} artifact_instruments={sorted(artifact_ids)}"],
+                expected="Every source instrument should have exactly one per-instrument review artifact directory.",
+                suggested_fix="Regenerate the factor redundancy review artifacts.",
+            )
+        )
+
+    for item in per_instrument_artifacts:
+        instrument_id = str(item.get("instrument_id"))
+        for field in ("correlation_matrix", "pair_relationships", "retention_decisions"):
+            if not item.get(field, {}).get("exists"):
+                findings.append(
+                    _finding(
+                        severity="high",
+                        category="artifact_gap",
+                        title="Per-instrument review artifact is missing.",
+                        evidence=[f"instrument_id={instrument_id} missing={field}"],
+                        expected="Each instrument should have a correlation matrix, pair relationships, and retention decisions.",
+                        suggested_fix="Regenerate the review for the affected instrument.",
+                    )
+                )
+        pair_relationships = item.get("pair_relationships", {}).get("content", [])
+        for relationship in pair_relationships:
+            if relationship.get("scope") != "per_instrument" or relationship.get("instrument_id") != instrument_id:
+                findings.append(
+                    _finding(
+                        severity="high",
+                        category="methodology_violation",
+                        title="Pair relationship is not scoped to its instrument.",
+                        evidence=[f"instrument_dir={instrument_id} relationship={relationship}"],
+                        expected="Every pair relationship should include scope=per_instrument and the matching instrument_id.",
+                        suggested_fix="Fix relationship serialization before using redundancy conclusions.",
+                    )
+                )
+                break
+        retention_decisions = item.get("retention_decisions", {}).get("content", [])
+        for decision in retention_decisions:
+            if decision.get("scope") != "per_instrument" or decision.get("instrument_id") != instrument_id:
+                findings.append(
+                    _finding(
+                        severity="high",
+                        category="methodology_violation",
+                        title="Retention decision is not scoped to its instrument.",
+                        evidence=[f"instrument_dir={instrument_id} decision={decision}"],
+                        expected="Every retention decision should include scope=per_instrument and the matching instrument_id.",
+                        suggested_fix="Fix retention decision serialization before using redundancy conclusions.",
+                    )
+                )
+                break
+
+    for summary in cross_object_summary:
+        if summary.get("scope") != "cross_object_summary":
+            findings.append(
+                _finding(
+                    severity="high",
+                    category="methodology_violation",
+                    title="Cross-object summary row has incorrect scope.",
+                    evidence=[str(summary)[:500]],
+                    expected="Cross-object rows should set scope=cross_object_summary.",
+                    suggested_fix="Regenerate cross-object summary from per-instrument evidence.",
+                )
+            )
+            break
+        if "global_exclude" in str(summary.get("global_recommendation")):
+            findings.append(
+                _finding(
+                    severity="high",
+                    category="methodology_violation",
+                    title="Cross-object summary attempts a global exclude.",
+                    evidence=[f"summary={summary}"],
+                    expected="Global layer may warn or downweight, but must not globally exclude factors.",
+                    suggested_fix="Change global recommendations to per-instrument-safe recommendations.",
+                )
+            )
+            break
+        if not isinstance(summary.get("instrument_evidence"), list):
+            findings.append(
+                _finding(
+                    severity="high",
+                    category="traceability_gap",
+                    title="Cross-object summary is missing instrument evidence.",
+                    evidence=[str(summary)[:500]],
+                    expected="Cross-object conclusions should aggregate per-instrument evidence.",
+                    suggested_fix="Regenerate cross-object summary with instrument_evidence refs.",
+                )
+            )
+            break
+
+    for diagnostic in pooled_diagnostics:
+        if diagnostic.get("scope") != "diagnostic_only":
+            findings.append(
+                _finding(
+                    severity="high",
+                    category="methodology_violation",
+                    title="Pooled diagnostic row is not diagnostic-only.",
+                    evidence=[str(diagnostic)[:500]],
+                    expected="Pooled correlations may only be emitted as diagnostic_only.",
+                    suggested_fix="Regenerate pooled diagnostics with diagnostic-only scope.",
+                )
+            )
+            break
+
+    if "does not compare one investment object's raw factor values against another" not in report:
+        findings.append(
+            _finding(
+                severity="medium",
+                category="report_gap",
+                title="Human report does not state the instrument-isolation guarantee.",
+                evidence=["factor-redundancy-report.md is missing the required isolation sentence."],
+                expected="Report should explicitly explain that raw factor values are not compared across investment objects.",
+                suggested_fix="Regenerate the report with the required beginner-facing methodology note.",
+            )
+        )
+
+    return findings
+
+
 def _canonical_stock_result_for_log(result: dict[str, Any]) -> dict[str, Any]:
     return {
         "ts_code": result.get("ts_code"),
@@ -1475,6 +1847,62 @@ def _build_factor_batch_external_review_payload(
         ],
         "top_aggregate_rows": _top_factor_batch_rows(summary.get("aggregate_summary", [])),
         "aggregate_report_excerpt": str(artifacts.get("aggregate_report", ""))[:6000],
+        "deterministic_findings": deterministic_findings,
+    }
+
+
+def _build_factor_redundancy_review_external_review_payload(
+    review_id: str,
+    run_id: str,
+    plan_snapshot: dict[str, Any],
+    artifacts: dict[str, Any],
+    deterministic_findings: list[dict[str, Any]],
+) -> dict[str, Any]:
+    config = artifacts.get("review_config", {})
+    manifest = artifacts.get("source_manifest", {})
+    cross_object_summary = artifacts.get("cross_object_summary", [])
+    high_confidence = [
+        item for item in cross_object_summary if item.get("global_recommendation") == "global_downweight_candidate"
+    ]
+    needs_review = [
+        item for item in cross_object_summary if item.get("global_recommendation") == "global_review_required"
+    ]
+    return {
+        "review_id": review_id,
+        "run_id": run_id,
+        "artifact_type": "factor_redundancy_review",
+        "plan_documents": [
+            {
+                "path": doc.get("path"),
+                "excerpt": str(doc.get("content", ""))[:1800],
+            }
+            for doc in plan_snapshot.get("documents", [])
+        ],
+        "review_config": {
+            "review_id": config.get("review_id"),
+            "correlation_threshold": config.get("correlation_threshold"),
+            "min_observations": config.get("min_observations"),
+            "method": config.get("method"),
+            "instrument_isolation": config.get("instrument_isolation"),
+            "raw_pooled_correlation_policy": config.get("raw_pooled_correlation_policy"),
+        },
+        "source_scope": {
+            "instrument_count": len(manifest.get("instruments", [])),
+            "instruments": [
+                {
+                    "instrument_id": instrument.get("instrument_id"),
+                    "row_count": instrument.get("row_count"),
+                    "ok_value_count": instrument.get("ok_value_count"),
+                    "date_min": instrument.get("date_min"),
+                    "date_max": instrument.get("date_max"),
+                }
+                for instrument in manifest.get("instruments", [])
+            ],
+        },
+        "high_confidence_pairs": high_confidence[:20],
+        "needs_review_pairs": needs_review[:20],
+        "pooled_diagnostics": artifacts.get("pooled_diagnostics", [])[:20],
+        "report_excerpt": str(artifacts.get("report", ""))[:6000],
         "deterministic_findings": deterministic_findings,
     }
 

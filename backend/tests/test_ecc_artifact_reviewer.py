@@ -9,6 +9,7 @@ from scripts.ecc_artifact_reviewer import (
     EccArtifactReviewer,
     StaticArtifactReviewClient,
     collect_factor_batch_source_artifacts,
+    collect_factor_redundancy_review_source_artifacts,
     collect_factor_source_artifacts,
     collect_source_artifacts,
 )
@@ -553,6 +554,63 @@ def test_collect_factor_batch_source_artifacts_includes_traceability_logs(tmp_pa
     assert "Aggregate Factor Batch Report" in artifacts["aggregate_report"]
 
 
+def test_ecc_artifact_reviewer_passes_complete_factor_redundancy_review(tmp_path: Path) -> None:
+    review_root = tmp_path / "factor-redundancy-reviews"
+    plan_root = tmp_path / "plans"
+    _write_plan_docs(plan_root)
+    _write_factor_redundancy_review(review_root, "factor-redundancy-review-test-1")
+    reviewer = EccArtifactReviewer(
+        factor_redundancy_review_root=review_root,
+        plan_doc_paths=[plan_root / "current-state.md", plan_root / "architecture.md"],
+    )
+
+    result = reviewer.review_factor_redundancy_review("factor-redundancy-review-test-1")
+
+    assert result.status == "passed"
+    assert result.findings_count == 0
+    review_dir = Path(result.artifact_dir)
+    assert review_dir.parent == review_root / "factor-redundancy-review-test-1" / "ecc-artifact-reviews"
+    review_config = json.loads((review_dir / "review-config.json").read_text())
+    assert review_config["artifact_type"] == "factor_redundancy_review"
+    assert "Factor Redundancy Review" in (review_dir / "artifact-review-report.md").read_text()
+    source_artifacts = json.loads((review_dir / "source-artifacts.json").read_text())
+    assert source_artifacts["artifact_type"] == "factor_redundancy_review"
+    assert source_artifacts["review_config"]["instrument_isolation"] is True
+    assert source_artifacts["per_instrument_artifacts"][0]["pair_relationships"]["item_count"] == 1
+
+
+def test_ecc_artifact_reviewer_flags_factor_redundancy_review_without_isolation(tmp_path: Path) -> None:
+    review_root = tmp_path / "factor-redundancy-reviews"
+    plan_root = tmp_path / "plans"
+    _write_plan_docs(plan_root)
+    review_dir = _write_factor_redundancy_review(review_root, "factor-redundancy-review-test-1")
+    config = json.loads((review_dir / "review-config.json").read_text())
+    config["instrument_isolation"] = False
+    (review_dir / "review-config.json").write_text(json.dumps(config), encoding="utf-8")
+    reviewer = EccArtifactReviewer(
+        factor_redundancy_review_root=review_root,
+        plan_doc_paths=[plan_root / "current-state.md", plan_root / "architecture.md"],
+    )
+
+    result = reviewer.review_factor_redundancy_review("factor-redundancy-review-test-1")
+
+    assert result.status == "needs_fix"
+    findings = json.loads((Path(result.artifact_dir) / "findings.json").read_text())
+    assert any(finding["category"] == "methodology_violation" for finding in findings["findings"])
+
+
+def test_collect_factor_redundancy_review_source_artifacts_includes_per_instrument_files(tmp_path: Path) -> None:
+    review_root = tmp_path / "factor-redundancy-reviews"
+    review_dir = _write_factor_redundancy_review(review_root, "factor-redundancy-review-test-1")
+
+    artifacts = collect_factor_redundancy_review_source_artifacts(review_dir)
+
+    assert artifacts["artifact_type"] == "factor_redundancy_review"
+    assert artifacts["source_manifest"]["instruments"][0]["instrument_id"] == "AAA.SZ"
+    assert artifacts["per_instrument_artifacts"][0]["retention_decisions"]["item_count"] == 2
+    assert any(path.endswith("pooled-diagnostics.json") for path in artifacts["paths"])
+
+
 def _write_plan_docs(plan_root: Path) -> None:
     plan_root.mkdir(parents=True)
     (plan_root / "current-state.md").write_text(
@@ -560,6 +618,116 @@ def _write_plan_docs(plan_root: Path) -> None:
         encoding="utf-8",
     )
     (plan_root / "architecture.md").write_text("Reports must explain N/A observations.", encoding="utf-8")
+
+
+def _write_factor_redundancy_review(review_root: Path, review_id: str) -> Path:
+    review_dir = review_root / review_id
+    instrument_dir = review_dir / "per-instrument" / "AAA.SZ"
+    instrument_dir.mkdir(parents=True)
+    (review_dir / "review-config.json").write_text(
+        json.dumps(
+            {
+                "review_id": review_id,
+                "input_mode": "factor_batch_summary",
+                "correlation_threshold": 0.9,
+                "min_observations": 3,
+                "method": "pearson",
+                "instrument_isolation": True,
+                "raw_pooled_correlation_policy": "diagnostic_only",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (review_dir / "source-data-manifest.json").write_text(
+        json.dumps(
+            {
+                "factor_batch_summary_path": "factor-batch-summary.json",
+                "factor_run_dirs": ["factor-run-AAA"],
+                "instruments": [
+                    {
+                        "instrument_id": "AAA.SZ",
+                        "factors_jsonl": "factor-run-AAA/stocks/AAA.SZ/factors.jsonl",
+                        "row_count": 10,
+                        "ok_value_count": 10,
+                        "date_min": "20260101",
+                        "date_max": "20260105",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (review_dir / "review-events.jsonl").write_text(
+        json.dumps({"event": "review_started"}) + "\n" + json.dumps({"event": "review_completed"}) + "\n",
+        encoding="utf-8",
+    )
+    (instrument_dir / "factor-correlation-matrix.csv").write_text(",factor_a,factor_b\nfactor_a,1.0,0.99\nfactor_b,0.99,1.0\n", encoding="utf-8")
+    (instrument_dir / "factor-pair-relationships.json").write_text(
+        json.dumps(
+            [
+                {
+                    "scope": "per_instrument",
+                    "instrument_id": "AAA.SZ",
+                    "factor_a": "factor_a",
+                    "factor_b": "factor_b",
+                    "relationship_type": "same_direction_duplicate",
+                    "recommendation": "downweight",
+                    "correlation": 0.99,
+                    "observation_count": 5,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (instrument_dir / "factor-retention-decisions.json").write_text(
+        json.dumps(
+            [
+                {
+                    "scope": "per_instrument",
+                    "instrument_id": "AAA.SZ",
+                    "factor_id": "factor_a",
+                    "decision": "keep",
+                },
+                {
+                    "scope": "per_instrument",
+                    "instrument_id": "AAA.SZ",
+                    "factor_id": "factor_b",
+                    "decision": "downweight",
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (review_dir / "cross-object-redundancy-summary.json").write_text(
+        json.dumps(
+            [
+                {
+                    "scope": "cross_object_summary",
+                    "factor_a": "factor_a",
+                    "factor_b": "factor_b",
+                    "eligible_instrument_count": 1,
+                    "strong_relationship_count": 1,
+                    "global_recommendation": "global_downweight_candidate",
+                    "instrument_evidence": [
+                        {
+                            "instrument_id": "AAA.SZ",
+                            "relationship_type": "same_direction_duplicate",
+                            "correlation": 0.99,
+                            "observation_count": 5,
+                        }
+                    ],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (review_dir / "pooled-diagnostics.json").write_text("[]", encoding="utf-8")
+    (review_dir / "factor-redundancy-groups.json").write_text("[]", encoding="utf-8")
+    (review_dir / "factor-redundancy-report.md").write_text(
+        "This review does not compare one investment object's raw factor values against another investment object's raw factor values.",
+        encoding="utf-8",
+    )
+    return review_dir
 
 
 def _write_research_run(
