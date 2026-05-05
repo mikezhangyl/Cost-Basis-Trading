@@ -133,6 +133,24 @@ FACTOR_TRACES: dict[str, FactorTrace] = {
     ),
 }
 
+FORMULA_PRUNED_FACTOR_REPLACEMENTS: dict[str, dict[str, str]] = {
+    "profit_ratio_asof": {
+        "replacement_factor": "loss_ratio_asof",
+        "reason": "Formula mirror of loss_ratio_asof; keeping trapped-chip pressure as the primary interpretation.",
+    },
+    "profit_ratio_delta_20d": {
+        "replacement_factor": "loss_ratio_delta_20d",
+        "reason": "Formula mirror of loss_ratio_delta_20d; keeping trapped-chip change as the primary interpretation.",
+    },
+    "cyq_cgo_asof": {
+        "replacement_factor": "weighted_chip_cost_gap_asof",
+        "reason": "Proxy for the same price-vs-weighted-chip-cost relationship; keeping the exact project factor-family implementation.",
+    },
+}
+
+PRUNED_FACTOR_IDS = frozenset(FORMULA_PRUNED_FACTOR_REPLACEMENTS)
+ACTIVE_FACTOR_IDS = tuple(factor_id for factor_id in FACTOR_TRACES if factor_id not in PRUNED_FACTOR_IDS)
+
 
 def build_daily_chip_snapshot(
     ts_code: str,
@@ -240,11 +258,26 @@ def build_factor_values(
 
     anchor = _lookback_snapshot(snapshots_by_date, ordered_dates, factor_date, lookback_days, expected_trading_dates)
     values.extend(_delta_factors(current, anchor, factor_date, lookback_days))
-    return values
+    return [factor for factor in values if factor.factor_id in ACTIVE_FACTOR_IDS]
 
 
 def factor_traceability_payload() -> list[dict[str, str]]:
-    return [trace.model_dump(mode="json") for trace in FACTOR_TRACES.values()]
+    return [FACTOR_TRACES[factor_id].model_dump(mode="json") for factor_id in ACTIVE_FACTOR_IDS]
+
+
+def factor_retention_policy_payload() -> dict[str, object]:
+    return {
+        "policy_id": "formula-pruned-v1",
+        "active_factor_ids": list(ACTIVE_FACTOR_IDS),
+        "excluded_factor_ids": sorted(PRUNED_FACTOR_IDS),
+        "excluded_factors": [
+            {
+                "factor_id": factor_id,
+                **FORMULA_PRUNED_FACTOR_REPLACEMENTS[factor_id],
+            }
+            for factor_id in sorted(PRUNED_FACTOR_IDS)
+        ],
+    }
 
 
 def _as_factor(

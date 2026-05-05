@@ -13,7 +13,12 @@ from uuid import uuid4
 sys.path.append(str(Path(__file__).resolve().parents[1] / "backend"))
 
 from app.domain.models import ChipDistributionPoint, DailyPriceBar
-from app.factors.chip_factors import build_daily_chip_snapshot, build_factor_values, factor_traceability_payload
+from app.factors.chip_factors import (
+    build_daily_chip_snapshot,
+    build_factor_values,
+    factor_retention_policy_payload,
+    factor_traceability_payload,
+)
 from app.services.code_normalizer import normalize_ts_code
 
 
@@ -75,6 +80,7 @@ def run_factor_production(
             "cache_root": str(cache_root),
             "warmup_trading_days": warmup_trading_days,
             "formula_version": "chip-factor-v1",
+            "factor_retention_policy": factor_retention_policy_payload(),
             "immutable_artifacts": True,
         },
     )
@@ -190,6 +196,7 @@ def _write_dry_run_stock(run_dir: Path, ts_code: str, factor_dates: list[str]) -
         },
     )
     _write_json(stock_dir / "factor-traceability.json", {"factors": factor_traceability_payload()})
+    _write_json(stock_dir / "factor-retention-policy.json", factor_retention_policy_payload())
     checksums = _stock_artifact_checksums(stock_dir)
     return {
         "ts_code": ts_code,
@@ -199,6 +206,7 @@ def _write_dry_run_stock(run_dir: Path, ts_code: str, factor_dates: list[str]) -
         "factor_ref": f"stocks/{ts_code}/factors.jsonl",
         "quality_ref": f"stocks/{ts_code}/factor-quality.json",
         "traceability_ref": f"stocks/{ts_code}/factor-traceability.json",
+        "retention_policy_ref": f"stocks/{ts_code}/factor-retention-policy.json",
         "checksums": checksums,
     }
 
@@ -266,6 +274,7 @@ def _write_live_stock(
         },
     )
     _write_json(stock_dir / "factor-traceability.json", {"factors": factor_traceability_payload()})
+    _write_json(stock_dir / "factor-retention-policy.json", factor_retention_policy_payload())
     checksums = _stock_artifact_checksums(stock_dir)
     return {
         "ts_code": ts_code,
@@ -275,6 +284,7 @@ def _write_live_stock(
         "factor_ref": f"stocks/{ts_code}/factors.jsonl",
         "quality_ref": f"stocks/{ts_code}/factor-quality.json",
         "traceability_ref": f"stocks/{ts_code}/factor-traceability.json",
+        "retention_policy_ref": f"stocks/{ts_code}/factor-retention-policy.json",
         "checksums": checksums,
     }
 
@@ -430,6 +440,7 @@ def _stock_artifact_checksums(stock_dir: Path) -> dict[str, str]:
         "factors.jsonl",
         "factor-quality.json",
         "factor-traceability.json",
+        "factor-retention-policy.json",
     ]
     return {ref: _file_checksum(stock_dir / ref) for ref in refs}
 

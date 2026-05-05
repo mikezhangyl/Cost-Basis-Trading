@@ -8,7 +8,7 @@ import pytest
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from app.domain.models import ChipDistributionPoint, DailyPriceBar
-from app.factors.chip_factors import build_daily_chip_snapshot, build_factor_values
+from app.factors.chip_factors import ACTIVE_FACTOR_IDS, PRUNED_FACTOR_IDS, build_daily_chip_snapshot, build_factor_values
 from scripts.chip_factor_runner import run_factor_production
 
 
@@ -86,11 +86,13 @@ def test_factor_values_mark_lookback_factors_insufficient_without_warmup() -> No
     factors = build_factor_values([snapshot], factor_date="20260105")
     by_id = {factor.factor_id: factor for factor in factors}
 
-    assert by_id["profit_ratio_asof"].value == 20
     assert by_id["loss_ratio_asof"].value == 80
-    assert by_id["profit_ratio_delta_20d"].value is None
-    assert by_id["profit_ratio_delta_20d"].quality_status == "INSUFFICIENT_HISTORY"
-    assert by_id["profit_ratio_delta_20d"].lookback_days == 20
+    assert by_id["loss_ratio_delta_20d"].value is None
+    assert by_id["loss_ratio_delta_20d"].quality_status == "INSUFFICIENT_HISTORY"
+    assert by_id["loss_ratio_delta_20d"].lookback_days == 20
+    assert "profit_ratio_asof" not in by_id
+    assert "profit_ratio_delta_20d" not in by_id
+    assert "cyq_cgo_asof" not in by_id
 
 
 def test_factor_values_require_complete_expected_trading_window_for_lookback() -> None:
@@ -123,8 +125,35 @@ def test_factor_values_require_complete_expected_trading_window_for_lookback() -
     )
     by_id = {factor.factor_id: factor for factor in factors}
 
-    assert by_id["profit_ratio_delta_20d"].quality_status == "INSUFFICIENT_HISTORY"
-    assert by_id["profit_ratio_delta_20d"].value is None
+    assert by_id["loss_ratio_delta_20d"].quality_status == "INSUFFICIENT_HISTORY"
+    assert by_id["loss_ratio_delta_20d"].value is None
+
+
+def test_factor_values_exclude_formula_pruned_duplicate_factors() -> None:
+    snapshot = build_daily_chip_snapshot(
+        ts_code="000001.SZ",
+        factor_date="20260105",
+        chip_points=[
+            ChipDistributionPoint(ts_code="000001.SZ", trade_date="20260105", price=10, percent=20),
+            ChipDistributionPoint(ts_code="000001.SZ", trade_date="20260105", price=11, percent=80),
+        ],
+        price_bar=DailyPriceBar(
+            ts_code="000001.SZ",
+            trade_date="20260105",
+            open=10,
+            high=11,
+            low=9,
+            close=10.5,
+        ),
+    )
+
+    factors = build_factor_values([snapshot], factor_date="20260105")
+    factor_ids = {factor.factor_id for factor in factors}
+
+    assert len(factor_ids) == 10
+    assert factor_ids == set(ACTIVE_FACTOR_IDS)
+    assert factor_ids.isdisjoint(PRUNED_FACTOR_IDS)
+    assert {"loss_ratio_asof", "loss_ratio_delta_20d", "weighted_chip_cost_gap_asof"}.issubset(factor_ids)
 
 
 def test_chip_factor_runner_dry_run_writes_immutable_artifact_package(tmp_path: Path) -> None:
@@ -164,14 +193,19 @@ def test_chip_factor_runner_dry_run_writes_immutable_artifact_package(tmp_path: 
     assert (stock_dir / "factors.jsonl").exists()
     assert (stock_dir / "factor-quality.json").exists()
     assert (stock_dir / "factor-traceability.json").exists()
+    assert (stock_dir / "factor-retention-policy.json").exists()
     manifest = json.loads((run_dir / "factor-run-manifest.json").read_text())
+    config = json.loads((run_dir / "factor-run-config.json").read_text())
     assert manifest["status"] == "completed"
     assert manifest["immutable"] is True
+    assert config["factor_retention_policy"]["active_factor_ids"] == list(ACTIVE_FACTOR_IDS)
+    assert config["factor_retention_policy"]["excluded_factor_ids"] == sorted(PRUNED_FACTOR_IDS)
     factors = [
         json.loads(line)
         for line in (stock_dir / "factors.jsonl").read_text().splitlines()
         if line.strip()
     ]
+    assert {factor["factor_id"] for factor in factors} == set(ACTIVE_FACTOR_IDS)
     factor_dates = {factor["factor_date"] for factor in factors}
     assert "20260101" in factor_dates
     assert "20260430" in factor_dates
@@ -281,13 +315,14 @@ def test_chip_factor_runner_live_mode_uses_local_cache_and_retry_logs(tmp_path: 
     factor_dates = {factor["factor_date"] for factor in factors}
     assert factor_dates == {"20260105", "20260106", "20260107"}
     by_date_and_id = {(factor["factor_date"], factor["factor_id"]): factor for factor in factors}
-    assert by_date_and_id[("20260105", "profit_ratio_delta_20d")]["quality_status"] == "OK"
-    assert by_date_and_id[("20260105", "profit_ratio_delta_20d")]["value"] is not None
+    assert by_date_and_id[("20260105", "loss_ratio_delta_20d")]["quality_status"] == "OK"
+    assert by_date_and_id[("20260105", "loss_ratio_delta_20d")]["value"] is not None
     manifest = json.loads((run_dir / "factor-run-manifest.json").read_text())
     assert manifest["dry_run"] is False
     assert manifest["stock_outputs"][0]["factor_date_count"] == 3
     assert manifest["stock_outputs"][0]["warmup_snapshot_count"] == 20
     assert manifest["stock_outputs"][0]["checksums"]["factors.jsonl"].startswith("sha256:")
+    assert manifest["stock_outputs"][0]["checksums"]["factor-retention-policy.json"].startswith("sha256:")
     chip_cache = json.loads(
         (tmp_path / "factor-cache" / "tushare" / "cyq_chips" / "000001.SZ" / "20251201.json").read_text()
     )
