@@ -14,6 +14,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1] / "backend"))
 
 from app.domain.models import ChipDistributionPoint, DailyPriceBar
 from app.factors.chip_factors import build_daily_chip_snapshot, build_factor_values, factor_traceability_payload
+from app.services.code_normalizer import normalize_ts_code
 
 
 def main() -> int:
@@ -51,7 +52,7 @@ def run_factor_production(
     data_client: Any | None = None,
     warmup_trading_days: int = 20,
 ) -> dict[str, str]:
-    normalized_stock_codes = [code.strip().upper() for code in stock_codes if code.strip()]
+    normalized_stock_codes = [normalize_ts_code(code) for code in stock_codes if code.strip()]
     if not normalized_stock_codes:
         raise SystemExit("At least one stock code is required.")
 

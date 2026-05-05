@@ -13,7 +13,7 @@ from scripts.chip_factor_batch_aggregate import aggregate_factor_batches
 
 def test_chip_factor_batch_isolates_stock_failures_and_aggregates_successes(tmp_path: Path) -> None:
     result = run_factor_batch(
-        stock_codes=["000001.SZ", "FAIL.SZ", "600519.SH"],
+            stock_codes=["000001.SZ", "000002.SZ", "600519.SH"],
         factor_start_date="20260101",
         factor_end_date="20260105",
         offsets=[1, 3],
@@ -40,7 +40,7 @@ def test_chip_factor_batch_isolates_stock_failures_and_aggregates_successes(tmp_
         "600519.SH",
     }
     failed = next(row for row in summary["stock_results"] if row["status"] == "failed")
-    assert failed["ts_code"] == "FAIL.SZ"
+    assert failed["ts_code"] == "000002.SZ"
     assert "api_key=[REDACTED]" in failed["error_message"]
     profit_n1 = next(
         row
@@ -50,6 +50,29 @@ def test_chip_factor_batch_isolates_stock_failures_and_aggregates_successes(tmp_
     assert profit_n1["stock_count"] == 2
     assert profit_n1["positive_correlation_count"] == 2
     assert "Failed Stocks" in (batch_dir / "aggregate-factor-report.md").read_text()
+
+
+def test_chip_factor_batch_normalizes_bare_stock_codes(tmp_path: Path) -> None:
+    result = run_factor_batch(
+        stock_codes=["603799"],
+        factor_start_date="20260101",
+        factor_end_date="20260105",
+        offsets=[1],
+        batch_root=tmp_path / "factor-batches",
+        factor_run_root=tmp_path / "factor-runs",
+        cache_root=tmp_path / "factor-cache",
+        batch_id="factor-batch-normalize-test",
+        sleep_between_stocks_seconds=0,
+        run_factor_fn=fake_run_factor,
+        evaluate_factor_fn=fake_evaluate_factor,
+    )
+
+    batch_dir = tmp_path / "factor-batches" / "factor-batch-normalize-test"
+    config = json.loads((batch_dir / "factor-batch-config.json").read_text())
+    summary = json.loads((batch_dir / "factor-batch-summary.json").read_text())
+    assert result.status == "completed"
+    assert config["stock_codes"] == ["603799.SH"]
+    assert summary["stock_results"][0]["ts_code"] == "603799.SH"
 
 
 def test_chip_factor_batch_refuses_to_overwrite_existing_batch(tmp_path: Path) -> None:
@@ -137,7 +160,7 @@ def fake_run_factor(**kwargs: object) -> dict[str, str]:
     run_id = str(kwargs["run_id"])
     artifact_root = Path(kwargs["artifact_root"])
     run_dir = artifact_root / run_id
-    if stock_code == "FAIL.SZ":
+    if stock_code == "000002.SZ":
         raise SystemExit("fake stock failure api_key=secret-value")
     run_dir.mkdir(parents=True)
     (run_dir / "factor-run-manifest.json").write_text(

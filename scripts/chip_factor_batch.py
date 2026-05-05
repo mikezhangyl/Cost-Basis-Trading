@@ -13,7 +13,9 @@ from typing import Any, Callable
 from uuid import uuid4
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
+sys.path.append(str(Path(__file__).resolve().parents[1] / "backend"))
 
+from app.services.code_normalizer import normalize_ts_code
 from scripts.chip_factor_evaluator import evaluate_factor_run
 from scripts.chip_factor_runner import run_factor_production
 
@@ -76,7 +78,7 @@ def run_factor_batch(
     run_factor_fn: RunFactorFn = run_factor_production,
     evaluate_factor_fn: EvaluateFactorFn = evaluate_factor_run,
 ) -> FactorBatchResult:
-    normalized_stock_codes = [code.strip().upper() for code in stock_codes if code.strip()]
+    normalized_stock_codes = [normalize_ts_code(code) for code in stock_codes if code.strip()]
     if not normalized_stock_codes:
         raise SystemExit("At least one stock code is required.")
     safe_offsets = sorted({offset for offset in offsets if offset > 0})

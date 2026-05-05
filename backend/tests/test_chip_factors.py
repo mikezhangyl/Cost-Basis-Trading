@@ -178,6 +178,25 @@ def test_chip_factor_runner_dry_run_writes_immutable_artifact_package(tmp_path: 
     assert manifest["stock_outputs"][0]["factor_date_count"] == len(factor_dates)
 
 
+def test_chip_factor_runner_normalizes_bare_stock_codes(tmp_path: Path) -> None:
+    result = run_factor_production(
+        stock_codes=["603799"],
+        factor_start_date="20260101",
+        factor_end_date="20260105",
+        artifact_root=tmp_path / "factor-runs",
+        cache_root=tmp_path / "factor-cache",
+        run_id="factor-run-normalize-test",
+        dry_run=True,
+    )
+
+    run_dir = Path(result["artifact_dir"])
+    config = json.loads((run_dir / "factor-run-config.json").read_text())
+    manifest = json.loads((run_dir / "factor-run-manifest.json").read_text())
+    assert config["stock_codes"] == ["603799.SH"]
+    assert manifest["stock_outputs"][0]["ts_code"] == "603799.SH"
+    assert (run_dir / "stocks" / "603799.SH" / "factors.jsonl").exists()
+
+
 def test_chip_factor_runner_refuses_to_overwrite_existing_run(tmp_path: Path) -> None:
     command = [
         sys.executable,

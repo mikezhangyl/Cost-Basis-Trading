@@ -34,6 +34,11 @@ class FakeTushareClient(TushareMarketDataClient):
         self.max_retries = 3
         self.retry_sleep_seconds = 0
         self.retry_event_handler = None
+        self.rate_limit_per_minute = 0
+        self._rate_limit_clock = lambda: 0.0
+        self._rate_limit_sleep = lambda seconds: None
+        self._rate_limit_window_started_at = 0.0
+        self._rate_limit_call_count = 0
 
 
 def test_chip_distribution_queries_each_trading_day_to_avoid_row_limit() -> None:
@@ -46,6 +51,37 @@ def test_chip_distribution_queries_each_trading_day_to_avoid_row_limit() -> None
     assert [call["trade_date"] for call in fake_pro.cyq_calls] == ["20260415", "20260416", "20260417"]
     assert all("start_date" not in call for call in fake_pro.cyq_calls)
     assert all("end_date" not in call for call in fake_pro.cyq_calls)
+
+
+def test_tushare_client_paces_calls_when_minute_budget_is_exhausted() -> None:
+    fake_pro = FakePro()
+    clock = FakeClock()
+    client = TushareMarketDataClient(
+        token="test-token",
+        rate_limit_per_minute=2,
+        rate_limit_clock=clock.now,
+        rate_limit_sleep=clock.sleep,
+    )
+    client._pro = fake_pro
+
+    client.get_trading_days_between("20260415", "20260417")
+    client.get_trading_days_between("20260415", "20260417")
+    client.get_trading_days_between("20260415", "20260417")
+
+    assert clock.sleep_calls == [60.0]
+
+
+class FakeClock:
+    def __init__(self) -> None:
+        self.current = 0.0
+        self.sleep_calls: list[float] = []
+
+    def now(self) -> float:
+        return self.current
+
+    def sleep(self, seconds: float) -> None:
+        self.sleep_calls.append(seconds)
+        self.current += seconds
 
 
 class TransientCyqPro(FakePro):
