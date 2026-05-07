@@ -11,7 +11,13 @@ from typing import Callable
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from scripts.ecc_artifact_reviewer import ArtifactReviewResult, EccArtifactReviewer, default_research_run_root
+from scripts.ecc_artifact_reviewer import (
+    ArtifactReviewResult,
+    EccArtifactReviewer,
+    default_factor_batch_root,
+    default_factor_run_root,
+    default_research_run_root,
+)
 
 
 @dataclass(frozen=True)
@@ -53,6 +59,22 @@ def find_latest_research_run(research_run_root: Path | None = None) -> Path:
     return runs[-1]
 
 
+def find_latest_factor_run(factor_run_root: Path | None = None) -> Path:
+    root = factor_run_root or default_factor_run_root()
+    runs = sorted((path for path in root.glob("factor-run-*") if path.is_dir()), key=_factor_run_sort_key)
+    if not runs:
+        raise FileNotFoundError(f"No factor runs found under {root}.")
+    return runs[-1]
+
+
+def find_latest_factor_batch(factor_batch_root: Path | None = None) -> Path:
+    root = factor_batch_root or default_factor_batch_root()
+    batches = sorted((path for path in root.glob("factor-batch-*") if path.is_dir()), key=_factor_batch_sort_key)
+    if not batches:
+        raise FileNotFoundError(f"No factor batches found under {root}.")
+    return batches[-1]
+
+
 def review_latest_research(research_run_root: Path | None = None) -> QualityWorkflowResult:
     latest_run = find_latest_research_run(research_run_root)
     review = EccArtifactReviewer(research_run_root=latest_run.parent).review_run(latest_run.name)
@@ -61,6 +83,32 @@ def review_latest_research(research_run_root: Path | None = None) -> QualityWork
         workflow="review-latest-research",
         run_id=latest_run.name,
         run_dir=str(latest_run),
+        review=review,
+        quality_subagent_prompt=quality_subagent_prompt,
+    )
+
+
+def review_latest_factor(factor_run_root: Path | None = None) -> QualityWorkflowResult:
+    latest_run = find_latest_factor_run(factor_run_root)
+    review = EccArtifactReviewer(factor_run_root=latest_run.parent).review_factor_run(latest_run.name)
+    quality_subagent_prompt = review.artifact_refs["quality_subagent_prompt"]
+    return QualityWorkflowResult(
+        workflow="review-latest-factor",
+        run_id=latest_run.name,
+        run_dir=str(latest_run),
+        review=review,
+        quality_subagent_prompt=quality_subagent_prompt,
+    )
+
+
+def review_latest_factor_batch(factor_batch_root: Path | None = None) -> QualityWorkflowResult:
+    latest_batch = find_latest_factor_batch(factor_batch_root)
+    review = EccArtifactReviewer(factor_batch_root=latest_batch.parent).review_factor_batch(latest_batch.name)
+    quality_subagent_prompt = review.artifact_refs["quality_subagent_prompt"]
+    return QualityWorkflowResult(
+        workflow="review-latest-factor-batch",
+        run_id=latest_batch.name,
+        run_dir=str(latest_batch),
         review=review,
         quality_subagent_prompt=quality_subagent_prompt,
     )
@@ -110,6 +158,26 @@ def main() -> int:
         default=None,
         help="Directory containing run-* research artifacts. Defaults to docs/research-runs.",
     )
+    latest_factor_parser = subparsers.add_parser(
+        "review-latest-factor",
+        help="Find the latest factor run and prepare an ECC Artifact Review packet.",
+    )
+    latest_factor_parser.add_argument(
+        "--factor-run-root",
+        type=Path,
+        default=None,
+        help="Directory containing factor-run-* artifacts. Defaults to docs/factor-runs.",
+    )
+    latest_factor_batch_parser = subparsers.add_parser(
+        "review-latest-factor-batch",
+        help="Find the latest factor batch and prepare an ECC Artifact Review packet.",
+    )
+    latest_factor_batch_parser.add_argument(
+        "--factor-batch-root",
+        type=Path,
+        default=None,
+        help="Directory containing factor-batch-* artifacts. Defaults to docs/factor-batches.",
+    )
     gate_parser = subparsers.add_parser(
         "quality-gate",
         help="Run the deterministic ECC quality gate intended for ECC Quality Sub-Agent execution.",
@@ -123,6 +191,14 @@ def main() -> int:
 
     if args.command == "review-latest-research":
         result = review_latest_research(args.research_run_root)
+        print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "review-latest-factor":
+        result = review_latest_factor(args.factor_run_root)
+        print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "review-latest-factor-batch":
+        result = review_latest_factor_batch(args.factor_batch_root)
         print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
         return 0
     if args.command == "quality-gate":
@@ -152,6 +228,30 @@ def _quality_gate_commands(root: Path, include_artifact_review: bool) -> list[tu
 
 def _run_command(command: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=False)
+
+
+def _factor_run_sort_key(path: Path) -> tuple[str, str]:
+    manifest_path = path / "factor-run-manifest.json"
+    if manifest_path.exists():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            timestamp = str(manifest.get("completed_at") or manifest.get("created_at") or "")
+            return (timestamp, path.name)
+        except json.JSONDecodeError:
+            return ("", path.name)
+    return ("", path.name)
+
+
+def _factor_batch_sort_key(path: Path) -> tuple[str, str]:
+    summary_path = path / "factor-batch-summary.json"
+    if summary_path.exists():
+        try:
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            timestamp = str(summary.get("completed_at") or summary.get("created_at") or "")
+            return (timestamp, path.name)
+        except json.JSONDecodeError:
+            return ("", path.name)
+    return ("", path.name)
 
 
 def _tail(output: str | None, max_chars: int = 4000) -> str:

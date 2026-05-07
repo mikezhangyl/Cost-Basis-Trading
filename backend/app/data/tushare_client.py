@@ -1,5 +1,6 @@
 import os
 import re
+import time
 from datetime import UTC, datetime, timedelta
 from time import sleep
 from typing import Any, Callable
@@ -10,7 +11,15 @@ from app.domain.models import ChipDistributionPoint, DailyPriceBar
 
 
 class TushareMarketDataClient:
-    def __init__(self, token: str | None = None, max_retries: int = 3, retry_sleep_seconds: float = 0.5) -> None:
+    def __init__(
+        self,
+        token: str | None = None,
+        max_retries: int = 3,
+        retry_sleep_seconds: float = 0.5,
+        rate_limit_per_minute: int | None = None,
+        rate_limit_clock: Callable[[], float] | None = None,
+        rate_limit_sleep: Callable[[float], None] | None = None,
+    ) -> None:
         load_environment()
         self.token = token or os.getenv("TUSHARE_TOKEN")
         if not self.token:
@@ -18,6 +27,11 @@ class TushareMarketDataClient:
         self._pro: Any | None = None
         self.max_retries = max(1, max_retries)
         self.retry_sleep_seconds = max(0, retry_sleep_seconds)
+        self.rate_limit_per_minute = _resolve_rate_limit_per_minute(rate_limit_per_minute)
+        self._rate_limit_clock = rate_limit_clock or time.monotonic
+        self._rate_limit_sleep = rate_limit_sleep or sleep
+        self._rate_limit_window_started_at = self._rate_limit_clock()
+        self._rate_limit_call_count = 0
         self.retry_event_handler: Callable[[dict[str, Any]], None] | None = None
 
     def set_retry_event_handler(self, handler: Callable[[dict[str, Any]], None] | None) -> None:
@@ -78,7 +92,7 @@ class TushareMarketDataClient:
 
     def get_chip_distribution(self, ts_code: str, start_date: str, end_date: str) -> list[ChipDistributionPoint]:
         frames = []
-        for trade_date in self._trading_days_between(start_date, end_date):
+        for trade_date in self.get_trading_days_between(start_date, end_date):
             frame = self._call_tushare(
                 "cyq_chips",
                 lambda trade_date=trade_date: self.pro.cyq_chips(ts_code=ts_code, trade_date=trade_date),
@@ -98,6 +112,9 @@ class TushareMarketDataClient:
             )
             for _, row in data.iterrows()
         ]
+
+    def get_trading_days_between(self, start_date: str, end_date: str) -> list[str]:
+        return self._trading_days_between(start_date, end_date)
 
     def _trading_days_between(self, start_date: str, end_date: str) -> list[str]:
         data = self._call_tushare(
@@ -138,6 +155,7 @@ class TushareMarketDataClient:
         last_error: DataUnavailableError | None = None
         for attempt in range(1, self.max_retries + 1):
             try:
+                self._wait_for_rate_limit(endpoint, params)
                 result = call()
                 if attempt > 1:
                     self._emit_retry_event(
@@ -185,6 +203,37 @@ class TushareMarketDataClient:
         if self.retry_event_handler is not None:
             self.retry_event_handler(event)
 
+    def _wait_for_rate_limit(self, endpoint: str, params: dict[str, Any]) -> None:
+        if self.rate_limit_per_minute <= 0:
+            return
+        now = self._rate_limit_clock()
+        elapsed = max(0.0, now - self._rate_limit_window_started_at)
+        if elapsed >= 60.0:
+            self._rate_limit_window_started_at = now
+            self._rate_limit_call_count = 0
+            elapsed = 0.0
+        if self._rate_limit_call_count >= self.rate_limit_per_minute:
+            sleep_seconds = max(0.0, 60.0 - elapsed)
+            if sleep_seconds > 0:
+                self._emit_retry_event(
+                    {
+                        "endpoint": endpoint,
+                        "params": params,
+                        "attempt": None,
+                        "max_retries": self.max_retries,
+                        "error_code": None,
+                        "error_message": None,
+                        "raw_error_message": None,
+                        "retryable": False,
+                        "sleep_seconds": sleep_seconds,
+                        "status": "rate_limited_sleep",
+                    }
+                )
+                self._rate_limit_sleep(sleep_seconds)
+            self._rate_limit_window_started_at = self._rate_limit_clock()
+            self._rate_limit_call_count = 0
+        self._rate_limit_call_count += 1
+
 
 def _optional_float(value: Any) -> float | None:
     if value is None:
@@ -199,6 +248,18 @@ def _concat_frames(frames: list[Any]) -> Any:
     import pandas as pd
 
     return pd.concat(frames, ignore_index=True)
+
+
+def _resolve_rate_limit_per_minute(explicit_value: int | None) -> int:
+    if explicit_value is not None:
+        return max(0, int(explicit_value))
+    raw_value = os.getenv("TUSHARE_RATE_LIMIT_PER_MINUTE")
+    if raw_value is None or raw_value.strip() == "":
+        return 500
+    try:
+        return max(0, int(raw_value))
+    except ValueError:
+        return 500
 
 
 def _map_tushare_error(error: Exception, endpoint: str | None = None, attempt: int | None = None, max_retries: int | None = None) -> DataUnavailableError:

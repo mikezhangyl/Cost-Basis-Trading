@@ -1,16 +1,18 @@
 ---
 name: ecc-artifact-reviewer
 description: Review generated development artifacts against project plans, especially AI-agent research-run outputs, and write traceable local review reports and fix-plan drafts.
-origin: project
 ---
 
 # ECC Artifact Reviewer
 
-Use this skill when a completed AI-agent research run needs development-time review before Codex changes code or plans. This is an ECC quality gate, not a product feature.
+Use this skill when a completed AI-agent research run, factor run, factor batch, or factor-redundancy review needs development-time review before Codex changes code or plans. This is an ECC quality gate, not a product feature.
 
 ## Inputs
 
 - `docs/research-runs/<run_id>/`
+- `docs/factor-runs/<factor-run-id>/`
+- `docs/factor-batches/<factor-batch-id>/`
+- `docs/factor-redundancy-reviews/<review-id>/`
 - project plan and design docs
 - optional external reviewer credentials, such as `DEEPSEEK_API_KEY`, when explicitly requested
 
@@ -37,6 +39,17 @@ python scripts/ecc_quality_workflow.py review-latest-research
 ```
 
 This command finds the newest `docs/research-runs/run-*`, runs ECC Artifact Reviewer for it, and prints a JSON payload containing the generated `quality-subagent-review-prompt.md` path plus the review artifact refs. Parent Codex should use it as a sub-agent task entrypoint, not as a product workflow.
+
+Review a factor redundancy review artifact:
+
+```bash
+python scripts/ecc_artifact_reviewer.py \
+  --artifact-type factor-redundancy-review \
+  --run-id <review-id> \
+  --no-llm
+```
+
+This checks instrument isolation, diagnostic-only pooled correlation, per-instrument scoping, cross-object summary safety, and report traceability.
 
 Stdout is always a JSON object, not a bare path. Callers should parse the JSON and read `quality_subagent_prompt` when they need the prompt file:
 
@@ -85,6 +98,8 @@ docs/research-runs/<run_id>/ecc-artifact-reviews/
     workflow-events.jsonl
     external-review-calls.jsonl
 ```
+
+For factor runs, factor batches, and factor-redundancy reviews, the same `ecc-artifact-reviews/` directory shape is written under the reviewed artifact directory.
 
 ## Rules
 
