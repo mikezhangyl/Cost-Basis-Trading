@@ -28,6 +28,12 @@ class DailyPriceBar(BaseModel):
     amount: float | None = None
 
 
+class AdjustmentFactor(BaseModel):
+    ts_code: str
+    trade_date: str
+    adj_factor: float
+
+
 class ScanRequest(BaseModel):
     stock_codes: list[str] = Field(min_length=1, max_length=100)
     n_days: int = Field(default=10, ge=1, le=120)

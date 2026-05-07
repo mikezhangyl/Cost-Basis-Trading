@@ -3,11 +3,13 @@ from uuid import uuid4
 
 from app.domain.errors import DataErrorCode, DataUnavailableError
 from app.domain.models import (
+    AdjustmentFactor,
     BacktestObservationPoint,
     BacktestRequest,
     BacktestResponse,
     ChipDistributionPoint,
     DailyPriceBar,
+    MarketContextFeatureSet,
 )
 from app.services.code_normalizer import normalize_ts_code
 from app.strategies.composite import evaluate_composite_signal
@@ -28,6 +30,9 @@ class BacktestMarketDataClient(Protocol):
         ...
 
     def get_daily_prices(self, ts_code: str, start_date: str, end_date: str) -> list[DailyPriceBar]:
+        ...
+
+    def get_adjustment_factors(self, ts_code: str, start_date: str, end_date: str) -> list[AdjustmentFactor]:
         ...
 
 
@@ -60,9 +65,26 @@ class BacktestService:
             raise DataUnavailableError(DataErrorCode.EMPTY_DATA, "Not enough price bars for requested backtest window.")
 
         signal = evaluate_composite_signal(build_market_features(ts_code, chips, analysis_prices))
-        market_context = build_market_context(analysis_prices)
+        adjustment_factors = _load_adjustment_factors(
+            self.market_data_client,
+            ts_code,
+            analysis_days[0],
+            final_observation_date,
+        )
+        market_context = _market_context_with_adjusted_return(
+            build_market_context(analysis_prices),
+            analysis_prices[0],
+            signal_bar,
+            adjustment_factors,
+        )
         observations = [
-            _build_observation(signal.action, signal_bar, _optional_bar_for_date(prices, observation_date), offset)
+            _build_observation(
+                signal.action,
+                signal_bar,
+                _optional_bar_for_date(prices, observation_date),
+                offset,
+                adjustment_factors,
+            )
             for offset, observation_date in observation_dates.items()
         ]
         return BacktestResponse.create(
@@ -83,6 +105,54 @@ def _safe_return(start_value: float, end_value: float) -> float:
     if start_value == 0:
         return 0
     return (end_value - start_value) / start_value
+
+
+def _load_adjustment_factors(
+    market_data_client: BacktestMarketDataClient,
+    ts_code: str,
+    start_date: str,
+    end_date: str,
+) -> dict[str, float] | None:
+    if getattr(market_data_client, "supports_adjustment_factors", True) is False:
+        return None
+    get_adjustment_factors = getattr(market_data_client, "get_adjustment_factors", None)
+    if not callable(get_adjustment_factors):
+        return None
+    factors = get_adjustment_factors(ts_code, start_date, end_date)
+    return {factor.trade_date: factor.adj_factor for factor in factors}
+
+
+def _market_context_with_adjusted_return(
+    market_context: MarketContextFeatureSet,
+    start_bar: DailyPriceBar,
+    end_bar: DailyPriceBar,
+    adjustment_factors: dict[str, float] | None,
+) -> MarketContextFeatureSet:
+    if adjustment_factors is None:
+        return market_context
+    return market_context.model_copy(
+        update={"price_return": _period_return(start_bar, end_bar, adjustment_factors)}
+    )
+
+
+def _period_return(
+    start_bar: DailyPriceBar,
+    end_bar: DailyPriceBar,
+    adjustment_factors: dict[str, float] | None,
+) -> float:
+    if adjustment_factors is None:
+        return _safe_return(start_bar.close, end_bar.close)
+    start_factor = adjustment_factors.get(start_bar.trade_date)
+    end_factor = adjustment_factors.get(end_bar.trade_date)
+    if start_factor is None or end_factor is None:
+        raise DataUnavailableError(
+            DataErrorCode.EMPTY_DATA,
+            f"Missing adjustment factor for {start_bar.trade_date} or {end_bar.trade_date}.",
+        )
+    denominator = start_bar.close * start_factor
+    if denominator == 0:
+        return 0
+    return (end_bar.close * end_factor) / denominator - 1
 
 
 def _observation_date(trading_days: list[str], window_days: int, offset_days: int) -> str | None:
@@ -118,6 +188,7 @@ def _build_observation(
     signal_bar: DailyPriceBar,
     observation_bar: DailyPriceBar | None,
     offset_days: int,
+    adjustment_factors: dict[str, float] | None = None,
 ) -> BacktestObservationPoint:
     if observation_bar is None:
         return BacktestObservationPoint(
@@ -129,7 +200,7 @@ def _build_observation(
             match_label="N/A",
             interpretation=f"N+{offset_days} 未来交易日不足，暂无法观察。",
         )
-    period_return = _safe_return(signal_bar.close, observation_bar.close)
+    period_return = _period_return(signal_bar, observation_bar, adjustment_factors)
     match_label = _match_label(action, period_return)
     return BacktestObservationPoint(
         offset_days=offset_days,

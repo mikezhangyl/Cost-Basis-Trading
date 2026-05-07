@@ -62,7 +62,9 @@ class ResearchRunService:
         run_dir.mkdir(parents=True, exist_ok=True)
         api_call_log = run_dir / "api-calls.jsonl"
         api_retry_log = run_dir / "api-retry-events.jsonl"
+        cache_event_log = run_dir / "cache-events.jsonl"
         api_retry_log.touch()
+        cache_event_log.touch()
 
         _write_json(
             run_dir / "run-config.json",
@@ -79,7 +81,16 @@ class ResearchRunService:
         )
 
         samples = [
-            self._run_sample(run_id, run_dir, api_call_log, api_retry_log, ts_code, start_date, request)
+            self._run_sample(
+                run_id,
+                run_dir,
+                api_call_log,
+                api_retry_log,
+                cache_event_log,
+                ts_code,
+                start_date,
+                request,
+            )
             for start_date in request.start_dates
         ]
         aggregate_scores = _aggregate_scores(samples)
@@ -104,9 +115,16 @@ class ResearchRunService:
                 "status": "completed",
                 "created_at": _now_iso(),
                 "sample_count": len(samples),
-                "output_refs": ["run-config.json", "api-calls.jsonl", "api-retry-events.jsonl", "run-manifest.json"],
+                "output_refs": [
+                    "run-config.json",
+                    "api-calls.jsonl",
+                    "api-retry-events.jsonl",
+                    "cache-events.jsonl",
+                    "run-manifest.json",
+                ],
                 "logged_market_data_call_count": _count_jsonl_rows(api_call_log),
                 "api_retry_summary": _summarize_api_retries(api_retry_log),
+                "cache_event_summary": _summarize_cache_events(cache_event_log),
                 "aggregate_scores": [score.model_dump(mode="json") for score in aggregate_scores],
                 "ai_review_status": ai_review["status"],
             },
@@ -170,13 +188,21 @@ class ResearchRunService:
         run_dir: Path,
         api_call_log: Path,
         api_retry_log: Path,
+        cache_event_log: Path,
         ts_code: str,
         start_date: str,
         request: ResearchRunRequest,
     ) -> ResearchSampleResult:
         sample_id = f"{ts_code}-{start_date}-N{request.window_days}"
         sample_dir = run_dir / "samples" / sample_id
-        logging_client = LoggingMarketDataClient(self.market_data_client, api_call_log, api_retry_log, run_id, sample_id)
+        logging_client = LoggingMarketDataClient(
+            self.market_data_client,
+            api_call_log,
+            api_retry_log,
+            cache_event_log,
+            run_id,
+            sample_id,
+        )
         try:
             backtest = BacktestService(logging_client).run(
                 BacktestRequest(stock_code=ts_code, start_date=start_date, window_days=request.window_days)
@@ -290,23 +316,33 @@ class LoggingMarketDataClient:
         wrapped: BacktestMarketDataClient,
         api_call_log: Path,
         api_retry_log: Path,
+        cache_event_log: Path,
         run_id: str,
         sample_id: str,
     ) -> None:
         self.wrapped = wrapped
         self.api_call_log = api_call_log
         self.api_retry_log = api_retry_log
+        self.cache_event_log = cache_event_log
         self.run_id = run_id
         self.sample_id = sample_id
+        self.supports_adjustment_factors = callable(getattr(wrapped, "get_adjustment_factors", None))
         set_retry_event_handler = getattr(wrapped, "set_retry_event_handler", None)
         self.previous_retry_event_handler = getattr(wrapped, "retry_event_handler", None)
         if callable(set_retry_event_handler):
             set_retry_event_handler(self._record_retry_event)
+        set_cache_event_handler = getattr(wrapped, "set_cache_event_handler", None)
+        self.previous_cache_event_handler = getattr(wrapped, "cache_event_handler", None)
+        if callable(set_cache_event_handler):
+            set_cache_event_handler(self._record_cache_event)
 
     def close(self) -> None:
         set_retry_event_handler = getattr(self.wrapped, "set_retry_event_handler", None)
         if callable(set_retry_event_handler):
             set_retry_event_handler(self.previous_retry_event_handler)
+        set_cache_event_handler = getattr(self.wrapped, "set_cache_event_handler", None)
+        if callable(set_cache_event_handler):
+            set_cache_event_handler(self.previous_cache_event_handler)
 
     def resolve_trading_days_from(self, start_date: str, n_days: int) -> list[str]:
         return self._record(
@@ -330,6 +366,16 @@ class LoggingMarketDataClient:
             "daily",
             {"ts_code": ts_code, "start_date": start_date, "end_date": end_date},
             lambda: self.wrapped.get_daily_prices(ts_code, start_date, end_date),
+        )
+
+    def get_adjustment_factors(self, ts_code: str, start_date: str, end_date: str) -> list[Any]:
+        get_adjustment_factors = getattr(self.wrapped, "get_adjustment_factors", None)
+        if not callable(get_adjustment_factors):
+            return []
+        return self._record(
+            "adj_factor",
+            {"ts_code": ts_code, "start_date": start_date, "end_date": end_date},
+            lambda: get_adjustment_factors(ts_code, start_date, end_date),
         )
 
     def _record(self, endpoint: str, params: dict[str, Any], call: Any) -> Any:
@@ -378,6 +424,18 @@ class LoggingMarketDataClient:
                 "run_id": self.run_id,
                 "sample_id": self.sample_id,
                 "source": "market_data_client",
+                **event,
+            },
+        )
+
+    def _record_cache_event(self, event: dict[str, Any]) -> None:
+        _append_jsonl(
+            self.cache_event_log,
+            {
+                "timestamp": _now_iso(),
+                "run_id": self.run_id,
+                "sample_id": self.sample_id,
+                "source": "market_data_cache",
                 **event,
             },
         )
@@ -507,6 +565,7 @@ def _build_ai_payload(
             "run_config": "run-config.json",
             "run_manifest": "run-manifest.json",
             "api_calls": "api-calls.jsonl",
+            "cache_events": "cache-events.jsonl",
             "aggregate_ai_review": "aggregate/ai_review.json",
             "aggregate_agent_decisions": "aggregate/agent-decisions.jsonl",
             "aggregate_report": "aggregate/final_report.md",
@@ -759,6 +818,44 @@ def _summarize_api_retries(path: Path) -> dict[str, Any]:
         "final_failure_count": len(final_failure_events),
         "had_retry": bool(retry_events),
     }
+
+
+def _summarize_cache_events(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return _empty_cache_event_summary()
+    events = [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    endpoints = sorted({str(event.get("endpoint")) for event in events if event.get("endpoint")})
+    return {
+        "cache_event_count": len(events),
+        "endpoint_count": len(endpoints),
+        "endpoints": endpoints,
+        "hit_count": _sum_event_int(events, "hit_count"),
+        "miss_count": _sum_event_int(events, "miss_count"),
+        "stale_count": _sum_event_int(events, "stale_count"),
+        "fetched_date_count": _sum_event_int(events, "fetched_date_count"),
+        "suppressed_no_data_count": _sum_event_int(events, "suppressed_no_data_count"),
+    }
+
+
+def _empty_cache_event_summary() -> dict[str, Any]:
+    return {
+        "cache_event_count": 0,
+        "endpoint_count": 0,
+        "endpoints": [],
+        "hit_count": 0,
+        "miss_count": 0,
+        "stale_count": 0,
+        "fetched_date_count": 0,
+        "suppressed_no_data_count": 0,
+    }
+
+
+def _sum_event_int(events: list[dict[str, Any]], key: str) -> int:
+    return sum(int(event.get(key) or 0) for event in events)
 
 
 def _default_artifact_root() -> Path:
