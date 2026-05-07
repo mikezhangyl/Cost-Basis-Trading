@@ -7,7 +7,7 @@ from typing import Any, Callable
 
 from app.core.config import load_environment
 from app.domain.errors import DataErrorCode, DataUnavailableError
-from app.domain.models import ChipDistributionPoint, DailyPriceBar
+from app.domain.models import AdjustmentFactor, ChipDistributionPoint, DailyPriceBar
 
 
 class TushareMarketDataClient:
@@ -117,15 +117,27 @@ class TushareMarketDataClient:
         return self._trading_days_between(start_date, end_date)
 
     def _trading_days_between(self, start_date: str, end_date: str) -> list[str]:
-        data = self._call_tushare(
-            "trade_cal",
-            lambda: self.pro.trade_cal(exchange="SSE", start_date=start_date, end_date=end_date, is_open="1"),
-            {"exchange": "SSE", "start_date": start_date, "end_date": end_date, "is_open": "1"},
-        )
-        dates = sorted(str(item) for item in data["cal_date"].tolist())
+        rows = self.get_trade_calendar(start_date, end_date)
+        dates = sorted(str(row["cal_date"]) for row in rows if bool(row["is_open"]))
         if not dates:
             raise DataUnavailableError(DataErrorCode.EMPTY_DATA, "No trading days found for cyq_chips range.")
         return dates
+
+    def get_trade_calendar(self, start_date: str, end_date: str) -> list[dict[str, object]]:
+        data = self._call_tushare(
+            "trade_cal",
+            lambda: self.pro.trade_cal(exchange="SSE", start_date=start_date, end_date=end_date),
+            {"exchange": "SSE", "start_date": start_date, "end_date": end_date},
+        )
+        if data.empty:
+            raise DataUnavailableError(DataErrorCode.EMPTY_DATA, "No trading calendar rows returned.")
+        return [
+            {
+                "cal_date": str(row["cal_date"]),
+                "is_open": str(row["is_open"]) == "1",
+            }
+            for _, row in data.iterrows()
+        ]
 
     def get_daily_prices(self, ts_code: str, start_date: str, end_date: str) -> list[DailyPriceBar]:
         data = self._call_tushare(
@@ -147,6 +159,23 @@ class TushareMarketDataClient:
                 pct_chg=_optional_float(row.get("pct_chg")),
                 vol=_optional_float(row.get("vol")),
                 amount=_optional_float(row.get("amount")),
+            )
+            for _, row in data.iterrows()
+        ]
+
+    def get_adjustment_factors(self, ts_code: str, start_date: str, end_date: str) -> list[AdjustmentFactor]:
+        data = self._call_tushare(
+            "adj_factor",
+            lambda: self.pro.adj_factor(ts_code=ts_code, start_date=start_date, end_date=end_date),
+            {"ts_code": ts_code, "start_date": start_date, "end_date": end_date},
+        )
+        if data.empty:
+            raise DataUnavailableError(DataErrorCode.EMPTY_DATA, "No adjustment factor rows returned.")
+        return [
+            AdjustmentFactor(
+                ts_code=str(row["ts_code"]),
+                trade_date=str(row["trade_date"]),
+                adj_factor=float(row["adj_factor"]),
             )
             for _, row in data.iterrows()
         ]
@@ -292,6 +321,16 @@ def _sanitize_error_message(message: str, max_length: int = 500) -> str:
     )
     cleaned = re.sub(
         r"(?i)([\"']?\b(?:token|api[_-]?key|secret|password)\b[\"']?\s*[:=]\s*)(?![\"'])[^\s,;}]+",
+        lambda match: f"{match.group(1)}[REDACTED]",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"(?i)(\b[A-Z0-9_]*(?:TOKEN|API_KEY|SECRET|PASSWORD)\b\s*=\s*)[^\s,;}]+",
+        lambda match: f"{match.group(1)}[REDACTED]",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"(?i)(Authorization\s*:\s*Bearer\s+)[^\s,;}]+",
         lambda match: f"{match.group(1)}[REDACTED]",
         cleaned,
     )

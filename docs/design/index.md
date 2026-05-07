@@ -33,5 +33,7 @@ Detailed chart design will be specified after the first signal table is working.
   defines the reusable factor-redundancy review skill design, including per-instrument isolation, cross-object summary rules, traceable artifacts, and strict testing gates.
 - [a-share-chip-backfill-agent.md](./a-share-chip-backfill-agent.md)
   defines the local, idempotent Tushare `cyq_chips` backfill agent for active A-share chip-distribution history.
+- [local-market-data-cache.md](./local-market-data-cache.md)
+  defines the durable local read-through market-data cache, including async write-behind, partial date hits, and raw versus adjusted price semantics.
 - [multi-agent-research-workflow.md](./multi-agent-research-workflow.md)
   defines the Supervisor-Orchestrated, Artifact-Driven Multi-Agent Research Workflow: agent roles, artifact handoffs, readiness gating, manifests, and future-leak prevention.

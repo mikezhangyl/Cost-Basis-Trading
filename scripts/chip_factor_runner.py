@@ -12,6 +12,7 @@ from uuid import uuid4
 
 sys.path.append(str(Path(__file__).resolve().parents[1] / "backend"))
 
+from app.data.market_data_client_factory import build_market_data_client
 from app.domain.models import ChipDistributionPoint, DailyPriceBar
 from app.factors.chip_factors import (
     build_daily_chip_snapshot,
@@ -86,6 +87,7 @@ def run_factor_production(
     )
     _touch(run_dir / "api-calls.jsonl")
     _touch(run_dir / "api-retry-events.jsonl")
+    _touch(run_dir / "cache-events.jsonl")
     _append_jsonl(
         run_dir / "worker-events.jsonl",
         {
@@ -100,12 +102,17 @@ def run_factor_production(
         output_dates = _weekday_dates(factor_start_date, factor_end_date)
         all_dates = output_dates
         stock_outputs = [_write_dry_run_stock(run_dir, ts_code, all_dates) for ts_code in normalized_stock_codes]
+        cache_flush_summary = _empty_cache_flush_summary()
     else:
-        client = data_client or _build_tushare_client()
+        client = data_client or _build_tushare_client(cache_root)
         previous_retry_handler = getattr(client, "retry_event_handler", None)
         set_retry_event_handler = getattr(client, "set_retry_event_handler", None)
+        previous_cache_handler = getattr(client, "cache_event_handler", None)
+        set_cache_event_handler = getattr(client, "set_cache_event_handler", None)
         if callable(set_retry_event_handler):
             set_retry_event_handler(lambda event: _record_retry_event(run_dir, run_id, event))
+        if callable(set_cache_event_handler):
+            set_cache_event_handler(lambda event: _record_cache_event(run_dir, run_id, event))
         try:
             all_dates = _call_with_api_log(
                 run_dir,
@@ -123,10 +130,14 @@ def run_factor_production(
         finally:
             if callable(set_retry_event_handler):
                 set_retry_event_handler(previous_retry_handler)
+            if callable(set_cache_event_handler):
+                set_cache_event_handler(previous_cache_handler)
+            cache_flush_summary = _flush_cache_writer(client)
 
+    status = "completed" if cache_flush_summary["failed"] == 0 else "completed_with_cache_warnings"
     manifest = {
         "factor_run_id": run_id,
-        "status": "completed",
+        "status": status,
         "created_at": created_at,
         "completed_at": _now_iso(),
         "immutable": True,
@@ -139,8 +150,11 @@ def run_factor_production(
             "factor-run-manifest.json",
             "api-calls.jsonl",
             "api-retry-events.jsonl",
+            "cache-events.jsonl",
             "worker-events.jsonl",
         ],
+        "cache_event_summary": _summarize_cache_events(run_dir / "cache-events.jsonl"),
+        "cache_flush_summary": cache_flush_summary,
         "stock_outputs": stock_outputs,
     }
     _write_json(run_dir / "factor-run-manifest.json", manifest)
@@ -150,11 +164,12 @@ def run_factor_production(
             "timestamp": _now_iso(),
             "event": "factor_run_completed",
             "factor_run_id": run_id,
+            "status": status,
             "stock_count": len(stock_outputs),
         },
     )
 
-    return {"run_id": run_id, "status": "completed", "artifact_dir": str(run_dir)}
+    return {"run_id": run_id, "status": status, "artifact_dir": str(run_dir)}
 
 
 def _write_dry_run_stock(run_dir: Path, ts_code: str, factor_dates: list[str]) -> dict[str, object]:
@@ -340,6 +355,32 @@ def _record_retry_event(run_dir: Path, run_id: str, event: dict[str, object]) ->
     )
 
 
+def _record_cache_event(run_dir: Path, run_id: str, event: dict[str, object]) -> None:
+    _append_jsonl(
+        run_dir / "cache-events.jsonl",
+        {
+            "timestamp": _now_iso(),
+            "factor_run_id": run_id,
+            "source": "market_data_cache",
+            **event,
+        },
+    )
+
+
+def _flush_cache_writer(client: Any) -> dict[str, int]:
+    cache_writer = getattr(client, "cache_writer", None)
+    flush = getattr(cache_writer, "flush", None)
+    if callable(flush):
+        result = flush()
+        summary = {
+            "succeeded": int(getattr(result, "succeeded", 0) or 0),
+            "failed": int(getattr(result, "failed", 0) or 0),
+        }
+    else:
+        summary = _empty_cache_flush_summary()
+    return summary
+
+
 def _row_count(result: object) -> int | None:
     if isinstance(result, list):
         return len(result)
@@ -485,10 +526,8 @@ def _default_cache_root() -> Path:
     return Path(__file__).resolve().parents[1] / "data" / "factor-cache"
 
 
-def _build_tushare_client() -> Any:
-    from app.data.tushare_client import TushareMarketDataClient
-
-    return TushareMarketDataClient()
+def _build_tushare_client(cache_root: Path) -> Any:
+    return build_market_data_client(cache_path=cache_root / "market_data.sqlite3")
 
 
 def _weekday_dates(start_date: str, end_date: str) -> list[str]:
@@ -505,6 +544,48 @@ def _weekday_dates(start_date: str, end_date: str) -> list[str]:
     if not dates:
         raise SystemExit("No weekday dry-run factor dates found in the requested range.")
     return dates
+
+
+def _summarize_cache_events(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return _empty_cache_event_summary()
+    events = [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    endpoints = sorted({str(event.get("endpoint")) for event in events if event.get("endpoint")})
+    return {
+        "cache_event_count": len(events),
+        "endpoint_count": len(endpoints),
+        "endpoints": endpoints,
+        "hit_count": _sum_event_int(events, "hit_count"),
+        "miss_count": _sum_event_int(events, "miss_count"),
+        "stale_count": _sum_event_int(events, "stale_count"),
+        "fetched_date_count": _sum_event_int(events, "fetched_date_count"),
+        "suppressed_no_data_count": _sum_event_int(events, "suppressed_no_data_count"),
+    }
+
+
+def _empty_cache_event_summary() -> dict[str, Any]:
+    return {
+        "cache_event_count": 0,
+        "endpoint_count": 0,
+        "endpoints": [],
+        "hit_count": 0,
+        "miss_count": 0,
+        "stale_count": 0,
+        "fetched_date_count": 0,
+        "suppressed_no_data_count": 0,
+    }
+
+
+def _empty_cache_flush_summary() -> dict[str, int]:
+    return {"succeeded": 0, "failed": 0}
+
+
+def _sum_event_int(events: list[dict[str, object]], key: str) -> int:
+    return sum(int(event.get(key) or 0) for event in events)
 
 
 if __name__ == "__main__":
