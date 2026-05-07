@@ -1,6 +1,6 @@
 import pytest
 
-from app.domain.models import BacktestRequest, ChipDistributionPoint, DailyPriceBar
+from app.domain.models import AdjustmentFactor, BacktestRequest, ChipDistributionPoint, DailyPriceBar
 from app.services.backtest_service import BacktestService
 
 
@@ -129,6 +129,28 @@ class MissingFuturePriceBacktestClient(FakeBacktestClient):
             for day in range(1, 11)
         ]
 
+
+class CorporateActionBacktestClient(FakeBacktestClient):
+    def get_daily_prices(self, ts_code: str, start_date: str, end_date: str) -> list[DailyPriceBar]:
+        bars = super().get_daily_prices(ts_code, start_date, end_date)
+        return [
+            bar.model_copy(update={"close": 54, "open": 53.8, "high": 54.4, "low": 53.6})
+            if bar.trade_date == "20260409"
+            else bar
+            for bar in bars
+        ]
+
+    def get_adjustment_factors(self, ts_code: str, start_date: str, end_date: str) -> list[AdjustmentFactor]:
+        return [
+            AdjustmentFactor(
+                ts_code=ts_code,
+                trade_date=trade_date,
+                adj_factor=2 if trade_date >= "20260409" else 1,
+            )
+            for trade_date in self._dates()
+            if start_date <= trade_date <= end_date
+        ]
+
     def get_chip_distribution(self, ts_code: str, start_date: str, end_date: str) -> list[ChipDistributionPoint]:
         return [
             ChipDistributionPoint(ts_code=ts_code, trade_date=f"202605{day:02d}", price=10 + day, percent=30)
@@ -194,3 +216,20 @@ def test_backtest_service_marks_observation_na_when_future_price_bar_is_missing(
     assert result.observations[3].observation_date is None
     assert result.observations[3].period_return is None
     assert result.observations[3].match_label == "N/A"
+
+
+def test_backtest_service_uses_adjustment_factors_for_forward_returns() -> None:
+    service = BacktestService(CorporateActionBacktestClient())
+
+    result = service.run(
+        BacktestRequest(
+            stock_code="600519",
+            start_date="20260401",
+            window_days=5,
+        )
+    )
+
+    assert result.observations[0].signal_close == 104
+    assert result.observations[0].observation_close == 54
+    assert result.observations[0].period_return == pytest.approx(0.038461538461538464)
+    assert result.market_context.price_return == pytest.approx(0.04)

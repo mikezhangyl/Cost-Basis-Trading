@@ -105,6 +105,36 @@ class RetryEventResearchRunClient(FakeResearchRunClient):
         return super().get_chip_distribution(ts_code, start_date, end_date)
 
 
+class CacheEventResearchRunClient(FakeResearchRunClient):
+    def __init__(self) -> None:
+        self.cache_event_handler = None
+
+    def set_cache_event_handler(self, handler: object) -> None:
+        self.cache_event_handler = handler
+
+    def get_daily_prices(self, ts_code: str, start_date: str, end_date: str) -> list[DailyPriceBar]:
+        rows = super().get_daily_prices(ts_code, start_date, end_date)
+        if self.cache_event_handler is not None:
+            self.cache_event_handler(
+                {
+                    "provider": "tushare",
+                    "endpoint": "daily",
+                    "ts_code": ts_code,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "requested_date_count": 5,
+                    "hit_count": 2,
+                    "miss_count": 3,
+                    "stale_count": 0,
+                    "suppressed_no_data_count": 0,
+                    "fetched_date_count": 3,
+                    "returned_row_count": len(rows),
+                    "write_status_counts": {"enqueued": 3},
+                }
+            )
+        return rows
+
+
 class FakeResearchAgentClient:
     def analyze_research_run(self, payload: dict) -> dict:
         observation_labels = ["N+1", "N+3", "N+5", "N+15", "N+30", "N+60", "N+90", "N+180"]
@@ -118,6 +148,7 @@ class FakeResearchAgentClient:
         assert "必须逐项覆盖" in payload["report_requirements"]["observation_label_contract"]
         assert "artifact_refs" in payload["report_requirements"]["traceability_contract"]
         assert payload["artifact_refs"]["api_calls"] == "api-calls.jsonl"
+        assert payload["artifact_refs"]["cache_events"] == "cache-events.jsonl"
         assert payload["artifact_refs"]["aggregate_report"] == "aggregate/final_report.md"
         sample_refs = payload["samples"][0]["artifact_refs"]
         assert sample_refs["feature_manifest"].endswith("/features/manifest.json")
@@ -210,6 +241,7 @@ def test_research_run_service_scores_strategies_and_writes_artifacts(tmp_path: P
     assert (run_dir / "run-manifest.json").exists()
     assert (run_dir / "api-calls.jsonl").exists()
     assert (run_dir / "api-retry-events.jsonl").exists()
+    assert (run_dir / "cache-events.jsonl").exists()
     assert (run_dir / "aggregate" / "agent-decisions.jsonl").exists()
     assert (run_dir / "aggregate" / "final_report.md").exists()
 
@@ -238,6 +270,10 @@ def test_research_run_service_scores_strategies_and_writes_artifacts(tmp_path: P
     review_payload = json.loads((run_dir / "aggregate" / "ai_review.json").read_text())
     assert review_payload["status"] == "completed"
     assert review_payload["model"] == "fake-agent"
+
+    manifest = json.loads((run_dir / "run-manifest.json").read_text())
+    assert "cache-events.jsonl" in manifest["output_refs"]
+    assert manifest["cache_event_summary"]["cache_event_count"] == 0
 
 
 def test_research_run_service_writes_api_retry_events(tmp_path: Path) -> None:
@@ -284,6 +320,50 @@ def test_research_run_service_writes_api_retry_events(tmp_path: Path) -> None:
     }
     assert manifest["logged_market_data_call_count"] > 0
     assert market_data_client.retry_event_handler is None
+
+
+def test_research_run_service_writes_cache_events(tmp_path: Path) -> None:
+    market_data_client = CacheEventResearchRunClient()
+    service = ResearchRunService(
+        market_data_client,
+        artifact_root=tmp_path,
+        research_agent_client=FakeResearchAgentClient(),
+    )
+
+    result = service.run(
+        ResearchRunRequest(
+            stock_code="000001",
+            start_dates=["20260401", "20260408"],
+            window_days=5,
+        )
+    )
+
+    run_dir = tmp_path / result.run_id
+    cache_events = [
+        json.loads(line)
+        for line in (run_dir / "cache-events.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    assert cache_events[0]["run_id"] == result.run_id
+    assert cache_events[0]["sample_id"] == result.samples[0].sample_id
+    assert cache_events[0]["source"] == "market_data_cache"
+    assert cache_events[0]["endpoint"] == "daily"
+    assert cache_events[0]["hit_count"] == 2
+    assert cache_events[0]["miss_count"] == 3
+    assert cache_events[0]["write_status_counts"] == {"enqueued": 3}
+
+    manifest = json.loads((run_dir / "run-manifest.json").read_text())
+    assert manifest["cache_event_summary"] == {
+        "cache_event_count": 2,
+        "endpoint_count": 1,
+        "endpoints": ["daily"],
+        "hit_count": 4,
+        "miss_count": 6,
+        "stale_count": 0,
+        "fetched_date_count": 6,
+        "suppressed_no_data_count": 0,
+    }
+    assert market_data_client.cache_event_handler is None
 
 
 def test_research_run_service_appends_deterministic_observation_coverage_when_ai_report_is_incomplete(

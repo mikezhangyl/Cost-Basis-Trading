@@ -2,7 +2,7 @@ import os
 
 from fastapi import APIRouter, HTTPException
 
-from app.data.tushare_client import TushareMarketDataClient
+from app.data.market_data_client_factory import build_market_data_client
 from app.domain.errors import DataUnavailableError
 from app.domain.models import (
     ApiEnvelope,
@@ -33,7 +33,7 @@ def health() -> ApiEnvelope:
 @router.post("/scans", response_model=ApiEnvelope)
 def create_scan(request: ScanRequest) -> ApiEnvelope:
     try:
-        service = ScanService(TushareMarketDataClient())
+        service = ScanService(build_market_data_client())
         return ApiEnvelope(success=True, data=service.scan(request).model_dump(mode="json"), error=None)
     except DataUnavailableError as error:
         raise HTTPException(status_code=503, detail={"code": error.code, "message": error.message}) from error
@@ -42,7 +42,7 @@ def create_scan(request: ScanRequest) -> ApiEnvelope:
 @router.post("/backtests", response_model=ApiEnvelope)
 def create_backtest(request: BacktestRequest) -> ApiEnvelope:
     try:
-        service = BacktestService(TushareMarketDataClient())
+        service = BacktestService(build_market_data_client())
         return ApiEnvelope(success=True, data=service.run(request).model_dump(mode="json"), error=None)
     except DataUnavailableError as error:
         raise HTTPException(status_code=503, detail={"code": error.code, "message": error.message}) from error
@@ -52,7 +52,7 @@ def create_backtest(request: BacktestRequest) -> ApiEnvelope:
 def create_research_run(request: ResearchRunRequest) -> ApiEnvelope:
     try:
         service = ResearchRunService(
-            TushareMarketDataClient(),
+            build_market_data_client(),
             research_agent_client=DeepSeekResearchAgentClient.from_environment(),
         )
         research_run = service.run(request)
