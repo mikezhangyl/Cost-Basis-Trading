@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Callable, Literal
 
 from app.data.cache_writer import CacheWriteMode, CacheWriter
@@ -37,10 +37,35 @@ class CachedMarketDataClient:
         self.cache_event_handler = handler
 
     def resolve_trading_days(self, end_date: str | None, n_days: int) -> list[str]:
-        return self.provider_client.resolve_trading_days(end_date, n_days)
+        if not callable(getattr(self.provider_client, "get_trade_calendar", None)):
+            return self.provider_client.resolve_trading_days(end_date, n_days)
+        resolved_end = end_date or datetime.now(UTC).strftime("%Y%m%d")
+        start_probe = (
+            datetime.strptime(resolved_end, "%Y%m%d").replace(tzinfo=UTC) - timedelta(days=max(30, n_days * 3))
+        ).strftime("%Y%m%d")
+        trading_days = [
+            row["cal_date"]
+            for row in self._cached_trade_calendar(start_probe, resolved_end)
+            if bool(row["is_open"])
+        ]
+        if len(trading_days) < n_days:
+            raise DataUnavailableError(DataErrorCode.EMPTY_DATA, "Not enough trading days returned by cached calendar.")
+        return trading_days[-n_days:]
 
     def resolve_trading_days_from(self, start_date: str, n_days: int) -> list[str]:
-        return self.provider_client.resolve_trading_days_from(start_date, n_days)
+        if not callable(getattr(self.provider_client, "get_trade_calendar", None)):
+            return self.provider_client.resolve_trading_days_from(start_date, n_days)
+        end_probe = (
+            datetime.strptime(start_date, "%Y%m%d").replace(tzinfo=UTC) + timedelta(days=max(30, n_days * 3))
+        ).strftime("%Y%m%d")
+        trading_days = [
+            row["cal_date"]
+            for row in self._cached_trade_calendar(start_date, end_probe)
+            if bool(row["is_open"])
+        ]
+        if len(trading_days) < n_days:
+            raise DataUnavailableError(DataErrorCode.EMPTY_DATA, "Not enough forward trading days returned by cached calendar.")
+        return trading_days[:n_days]
 
     def get_stock_name(self, ts_code: str) -> str | None:
         return self.provider_client.get_stock_name(ts_code)
@@ -272,11 +297,62 @@ class CachedMarketDataClient:
         return (end_price * end_factor) / denominator - 1
 
     def _trading_days_between(self, start_date: str, end_date: str) -> list[str]:
+        if callable(getattr(self.provider_client, "get_trade_calendar", None)):
+            trading_days = [
+                row["cal_date"]
+                for row in self._cached_trade_calendar(start_date, end_date)
+                if bool(row["is_open"])
+            ]
+            if not trading_days:
+                raise DataUnavailableError(DataErrorCode.EMPTY_DATA, "No trading days found for cached calendar range.")
+            return trading_days
         resolver = getattr(self.provider_client, "get_trading_days_between", None)
         if callable(resolver):
             return sorted(str(date) for date in resolver(start_date, end_date))
         private_resolver = getattr(self.provider_client, "_trading_days_between")
         return sorted(str(date) for date in private_resolver(start_date, end_date))
+
+    def _cached_trade_calendar(self, start_date: str, end_date: str) -> list[dict[str, object]]:
+        calendar_dates = _calendar_dates_between(start_date, end_date)
+        keys = [self._trade_cal_key(calendar_date) for calendar_date in calendar_dates]
+        lookup = self.cache_store.read_many(keys)
+        rows_by_date: dict[str, dict[str, object]] = {}
+        write_status_counts: dict[str, int] = {}
+
+        for key in keys:
+            entry = lookup.hits.get(key.identity)
+            if entry is None or entry.payload_kind != CachePayloadKind.ROWS:
+                continue
+            rows_by_date[key.date_key] = _trade_cal_row_from_payload(entry.payload)
+
+        fetch_needed = any(key.identity in lookup.misses or key.identity in lookup.stale for key in keys)
+        if fetch_needed:
+            fetched_rows = self.provider_client.get_trade_calendar(start_date, end_date)
+            for row in fetched_rows:
+                normalized_row = {
+                    "cal_date": str(row["cal_date"]),
+                    "is_open": _truthy_is_open(row["is_open"]),
+                }
+                rows_by_date[str(normalized_row["cal_date"])] = normalized_row
+                _record_write_status(
+                    write_status_counts,
+                    self.cache_writer.write(self._trade_cal_write(normalized_row)).status,
+                )
+
+        rows = [rows_by_date[calendar_date] for calendar_date in calendar_dates if calendar_date in rows_by_date]
+        self._record_cache_event(
+            endpoint="trade_cal",
+            ts_code="SSE",
+            start_date=start_date,
+            end_date=end_date,
+            requested_date_count=len(keys),
+            returned_row_count=len(rows),
+            fetched_date_count=len(calendar_dates) if fetch_needed else 0,
+            lookup=lookup,
+            suppressed_date_count=0,
+            write_status_counts=write_status_counts,
+        )
+        return rows
 
     def _daily_key(self, ts_code: str, trade_date: str) -> CacheKey:
         return CacheKey(
@@ -318,6 +394,20 @@ class CachedMarketDataClient:
                 "schema_version": 1,
                 "fields": ["ts_code", "trade_date", "adj_factor"],
                 "asset": "E",
+            },
+        )
+
+    def _trade_cal_key(self, calendar_date: str) -> CacheKey:
+        return CacheKey(
+            provider=self.provider,
+            endpoint="trade_cal",
+            instrument_id="SSE",
+            date_key=calendar_date,
+            date_key_role="calendar_date",
+            semantic_params={
+                "schema_version": 1,
+                "exchange": "SSE",
+                "fields": ["cal_date", "is_open"],
             },
         )
 
@@ -387,6 +477,18 @@ class CachedMarketDataClient:
             cache_schema_version=1,
         )
 
+    def _trade_cal_write(self, row: dict[str, object]) -> CacheWrite:
+        calendar_date = str(row["cal_date"])
+        return CacheWrite(
+            key=self._trade_cal_key(calendar_date),
+            payload_kind=CachePayloadKind.ROWS,
+            payload={"cal_date": calendar_date, "is_open": bool(row["is_open"])},
+            source_params={"exchange": "SSE", "cal_date": calendar_date},
+            fetched_at=_now_iso(),
+            provider_updated_at=None,
+            cache_schema_version=1,
+        )
+
     def _record_cache_event(
         self,
         *,
@@ -440,6 +542,15 @@ def _adjustment_factor_from_payload(payload: object) -> AdjustmentFactor:
     return AdjustmentFactor(**payload)
 
 
+def _trade_cal_row_from_payload(payload: object) -> dict[str, object]:
+    if not isinstance(payload, dict):
+        raise ValueError("Cached trade calendar payload must be an object.")
+    return {
+        "cal_date": str(payload["cal_date"]),
+        "is_open": _truthy_is_open(payload["is_open"]),
+    }
+
+
 def _validate_price_semantics(semantics: PriceSemantics) -> None:
     if not _is_yyyymmdd(semantics.data_horizon):
         raise ValueError("data_horizon must use YYYYMMDD format.")
@@ -486,6 +597,19 @@ def _date_ranges(dates: list[str]) -> list[tuple[str, str]]:
 
 def _dates_between(dates: list[str], start: str, end: str) -> list[str]:
     return [date for date in sorted(dates) if start <= date <= end]
+
+
+def _calendar_dates_between(start: str, end: str) -> list[str]:
+    start_date = datetime.strptime(start, "%Y%m%d").date()
+    end_date = datetime.strptime(end, "%Y%m%d").date()
+    days = (end_date - start_date).days
+    return [(start_date + timedelta(days=offset)).strftime("%Y%m%d") for offset in range(days + 1)]
+
+
+def _truthy_is_open(value: object) -> bool:
+    if isinstance(value, str):
+        return value == "1" or value.lower() == "true"
+    return bool(value)
 
 
 def _is_next_calendar_day(left: str, right: str) -> bool:

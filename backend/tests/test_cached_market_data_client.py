@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from app.data.cache_writer import CacheWriteMode, CacheWriter
@@ -48,6 +49,24 @@ class FakeProviderClient:
         return [
             AdjustmentFactor(ts_code=ts_code, trade_date=trade_date, adj_factor=factors[trade_date])
             for trade_date in self.get_trading_days_between(start_date, end_date)
+        ]
+
+
+class CalendarProviderClient(FakeProviderClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.calendar_calls: list[tuple[str, str]] = []
+
+    def get_trade_calendar(self, start_date: str, end_date: str) -> list[dict[str, object]]:
+        self.calendar_calls.append((start_date, end_date))
+        start = datetime.strptime(start_date, "%Y%m%d").date()
+        end = datetime.strptime(end_date, "%Y%m%d").date()
+        return [
+            {
+                "cal_date": (start + timedelta(days=offset)).strftime("%Y%m%d"),
+                "is_open": (start + timedelta(days=offset)).strftime("%Y%m%d") in self.trading_days,
+            }
+            for offset in range((end - start).days + 1)
         ]
 
 
@@ -107,6 +126,31 @@ def test_daily_prices_partial_hit_fetches_only_missing_dates(tmp_path: Path) -> 
     assert [row.trade_date for row in rows] == ["20260415", "20260416", "20260417"]
     assert provider.daily_calls == [("600519.SH", "20260416", "20260416")]
     assert store.count_versions() == 3
+
+
+def test_trade_calendar_is_cached_for_repeated_range_resolution(tmp_path: Path) -> None:
+    provider = CalendarProviderClient()
+    _store, client, _provider = store_and_client(tmp_path, provider)
+
+    first = client.get_daily_prices("600519.SH", "20260415", "20260417")
+    second = client.get_daily_prices("600519.SH", "20260415", "20260417")
+
+    assert [row.trade_date for row in first] == ["20260415", "20260416", "20260417"]
+    assert [row.trade_date for row in second] == ["20260415", "20260416", "20260417"]
+    assert provider.calendar_calls == [("20260415", "20260417")]
+    assert provider.daily_calls == [("600519.SH", "20260415", "20260417")]
+
+
+def test_resolve_trading_days_uses_cached_trade_calendar(tmp_path: Path) -> None:
+    provider = CalendarProviderClient()
+    _store, client, _provider = store_and_client(tmp_path, provider)
+
+    first = client.resolve_trading_days("20260417", 2)
+    second = client.resolve_trading_days("20260417", 2)
+
+    assert first == ["20260416", "20260417"]
+    assert second == ["20260416", "20260417"]
+    assert provider.calendar_calls == [("20260318", "20260417")]
 
 
 def test_cached_client_emits_cache_events(tmp_path: Path) -> None:

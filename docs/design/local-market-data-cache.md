@@ -501,7 +501,7 @@ Resolved in the first implementation:
 Implemented pieces:
 
 1. Cache store schema, immutable versions, current pointers, conflict records, recent-row refresh, read checksum/schema validation, and durable async write jobs with background drain.
-2. Cached client wrapper with partial-hit fetches, provisional no-data markers, adjustment-factor caching, and cache events.
+2. Cached client wrapper with partial-hit fetches, trading-calendar caching, provisional no-data markers, adjustment-factor caching, and cache events.
 3. Price adjustment tests around dividend/ex-right-like raw close drops.
 4. Scan, backtest, and research-run construction through `build_market_data_client()`.
 5. Research-run `cache-events.jsonl` and run-manifest cache-event summaries.
