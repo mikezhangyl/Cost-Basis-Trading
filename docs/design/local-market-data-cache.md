@@ -506,8 +506,8 @@ Implemented pieces:
 4. Scan, backtest, and research-run construction through `build_market_data_client()`.
 5. Research-run `cache-events.jsonl` and run-manifest cache-event summaries.
 6. Factor runner construction through `build_market_data_client()`, with runner-level `cache-events.jsonl`, `cache_event_summary`, and `cache_flush_summary`.
+7. Live runner smoke over `000001.SZ` for 2024-04-15 to 2024-04-17: the second run over the same cache root had `miss_count=0`, `fetched_date_count=0`, and cache flush failures at zero.
 
 Remaining pieces:
 
-1. Run a tiny live provider smoke test from the runner integration branch and inspect the generated SQLite cache.
-2. Add manual cache-inspection CLI commands after the core path has live-run evidence.
+1. Add manual cache-inspection CLI commands after the core path has live-run evidence.

@@ -216,6 +216,8 @@ Acceptance tests:
 
 Status: implemented in the runner integration branch. The runner now uses `build_market_data_client()` for live runs, writes `cache-events.jsonl`, records `cache_event_summary` and `cache_flush_summary`, surfaces cache persistence failures as `completed_with_cache_warnings`, and has a default async integration test covering repeated runs over the same SQLite cache.
 
+Live smoke: `000001.SZ` from 2024-04-15 to 2024-04-17 was run twice against the same local cache root. The first run fetched `trade_cal`, `daily`, and `cyq_chips`; the second run reported `miss_count=0`, `fetched_date_count=0`, and `cache_flush_summary.failed=0`.
+
 ## Configuration
 
 Add to `.env.example`:
