@@ -8,10 +8,11 @@ class FakePro:
     def __init__(self) -> None:
         self.cyq_calls: list[dict[str, str]] = []
 
-    def trade_cal(self, exchange: str, start_date: str, end_date: str, is_open: str):
+    def trade_cal(self, exchange: str, start_date: str, end_date: str, is_open: str | None = None):
         return pd.DataFrame(
             {
                 "cal_date": ["20260415", "20260416", "20260417"],
+                "is_open": [1, 1, 1],
             }
         )
 
@@ -23,6 +24,15 @@ class FakePro:
                 "trade_date": [kwargs["trade_date"]],
                 "price": [10.0],
                 "percent": [1.0],
+            }
+        )
+
+    def adj_factor(self, ts_code: str, start_date: str, end_date: str):
+        return pd.DataFrame(
+            {
+                "ts_code": [ts_code, ts_code],
+                "trade_date": [start_date, end_date],
+                "adj_factor": [1.0, 2.0],
             }
         )
 
@@ -46,6 +56,37 @@ def test_chip_distribution_queries_each_trading_day_to_avoid_row_limit() -> None
     assert [call["trade_date"] for call in fake_pro.cyq_calls] == ["20260415", "20260416", "20260417"]
     assert all("start_date" not in call for call in fake_pro.cyq_calls)
     assert all("end_date" not in call for call in fake_pro.cyq_calls)
+
+
+def test_get_adjustment_factors_normalizes_tushare_rows() -> None:
+    fake_pro = FakePro()
+    client = FakeTushareClient(fake_pro)
+
+    rows = client.get_adjustment_factors("600519.SH", "20260415", "20260417")
+
+    assert [row.trade_date for row in rows] == ["20260415", "20260417"]
+    assert [row.adj_factor for row in rows] == [1.0, 2.0]
+
+
+def test_get_trade_calendar_normalizes_tushare_rows() -> None:
+    class CalendarPro(FakePro):
+        def trade_cal(self, exchange: str, start_date: str, end_date: str, is_open: str | None = None):
+            assert is_open is None
+            return pd.DataFrame(
+                {
+                    "cal_date": ["20260415", "20260416"],
+                    "is_open": [1, 0],
+                }
+            )
+
+    client = FakeTushareClient(CalendarPro())
+
+    rows = client.get_trade_calendar("20260415", "20260416")
+
+    assert rows == [
+        {"cal_date": "20260415", "is_open": True},
+        {"cal_date": "20260416", "is_open": False},
+    ]
 
 
 class TransientCyqPro(FakePro):
@@ -187,6 +228,34 @@ def test_chip_distribution_redacts_secret_like_values_from_retry_events() -> Non
     assert "bare-secret" not in events[0]["raw_error_message"]
     assert "hidden" not in events[0]["raw_error_message"]
     assert "[REDACTED]" in events[0]["raw_error_message"]
+
+
+def test_chip_distribution_redacts_env_and_authorization_secret_formats() -> None:
+    class EnvSecretCyqPro(FakePro):
+        def cyq_chips(self, **kwargs):
+            self.cyq_calls.append(kwargs)
+            raise RuntimeError(
+                "TUSHARE_TOKEN=ts-secret OPENAI_API_KEY=openai-secret "
+                "Authorization: Bearer bearer-secret"
+            )
+
+    fake_pro = EnvSecretCyqPro()
+    client = FakeTushareClient(fake_pro)
+    events: list[dict] = []
+    client.set_retry_event_handler(events.append)
+
+    try:
+        client.get_chip_distribution("600519.SH", "20260415", "20260415")
+    except DataUnavailableError:
+        pass
+    else:
+        raise AssertionError("Expected retry exhaustion to raise.")
+
+    raw_error = events[0]["raw_error_message"]
+    assert "ts-secret" not in raw_error
+    assert "openai-secret" not in raw_error
+    assert "bearer-secret" not in raw_error
+    assert "[REDACTED]" in raw_error
 
 
 def test_chip_distribution_reports_final_attempt_when_retries_are_exhausted() -> None:
