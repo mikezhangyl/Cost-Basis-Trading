@@ -1,14 +1,18 @@
 import json
 import subprocess
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
+from app.data import market_data_client_factory
+from app.data.cache_writer import CacheFlushResult
 from app.domain.models import ChipDistributionPoint, DailyPriceBar
 from app.factors.chip_factors import ACTIVE_FACTOR_IDS, PRUNED_FACTOR_IDS, build_daily_chip_snapshot, build_factor_values
+from scripts import chip_factor_runner
 from scripts.chip_factor_runner import run_factor_production
 
 
@@ -188,6 +192,7 @@ def test_chip_factor_runner_dry_run_writes_immutable_artifact_package(tmp_path: 
     assert (run_dir / "factor-run-manifest.json").exists()
     assert (run_dir / "api-calls.jsonl").exists()
     assert (run_dir / "api-retry-events.jsonl").exists()
+    assert (run_dir / "cache-events.jsonl").exists()
     assert (run_dir / "worker-events.jsonl").exists()
     assert (stock_dir / "daily-chip-snapshots.jsonl").exists()
     assert (stock_dir / "factors.jsonl").exists()
@@ -210,6 +215,25 @@ def test_chip_factor_runner_dry_run_writes_immutable_artifact_package(tmp_path: 
     assert "20260101" in factor_dates
     assert "20260430" in factor_dates
     assert manifest["stock_outputs"][0]["factor_date_count"] == len(factor_dates)
+    assert "cache-events.jsonl" in manifest["output_refs"]
+    assert manifest["cache_event_summary"]["cache_event_count"] == 0
+    assert manifest["cache_flush_summary"] == {"succeeded": 0, "failed": 0}
+
+
+def test_chip_factor_runner_builds_cached_market_data_client_at_cache_root(tmp_path: Path, monkeypatch) -> None:
+    captured: dict[str, Path | None] = {}
+    sentinel = object()
+
+    def fake_build_market_data_client(cache_path: Path | None = None):
+        captured["cache_path"] = cache_path
+        return sentinel
+
+    monkeypatch.setattr(chip_factor_runner, "build_market_data_client", fake_build_market_data_client)
+
+    client = chip_factor_runner._build_tushare_client(tmp_path / "factor-cache")
+
+    assert client is sentinel
+    assert captured["cache_path"] == tmp_path / "factor-cache" / "market_data.sqlite3"
 
 
 def test_chip_factor_runner_normalizes_bare_stock_codes(tmp_path: Path) -> None:
@@ -330,6 +354,121 @@ def test_chip_factor_runner_live_mode_uses_local_cache_and_retry_logs(tmp_path: 
     assert chip_cache["rows_checksum"].startswith("sha256:")
 
 
+def test_chip_factor_runner_default_async_client_reuses_sqlite_cache_between_runs(tmp_path: Path, monkeypatch) -> None:
+    CountingProvider.reset()
+    monkeypatch.setenv("MARKET_DATA_CACHE_ENABLED", "true")
+    monkeypatch.delenv("MARKET_DATA_CACHE_WRITE_MODE", raising=False)
+    monkeypatch.setattr(market_data_client_factory, "TushareMarketDataClient", CountingProvider)
+
+    run_factor_production(
+        stock_codes=["000001.SZ"],
+        factor_start_date="20260105",
+        factor_end_date="20260107",
+        artifact_root=tmp_path / "factor-runs",
+        cache_root=tmp_path / "factor-cache",
+        run_id="factor-run-cache-chain-first",
+        dry_run=False,
+        warmup_trading_days=2,
+    )
+    first_counts = (
+        CountingProvider.trade_calendar_call_count,
+        CountingProvider.daily_call_count,
+        CountingProvider.chip_call_count,
+    )
+
+    run_factor_production(
+        stock_codes=["000001.SZ"],
+        factor_start_date="20260105",
+        factor_end_date="20260107",
+        artifact_root=tmp_path / "factor-runs",
+        cache_root=tmp_path / "factor-cache",
+        run_id="factor-run-cache-chain-second",
+        dry_run=False,
+        warmup_trading_days=2,
+    )
+
+    assert (
+        CountingProvider.trade_calendar_call_count,
+        CountingProvider.daily_call_count,
+        CountingProvider.chip_call_count,
+    ) == first_counts
+    second_manifest = json.loads(
+        (tmp_path / "factor-runs" / "factor-run-cache-chain-second" / "factor-run-manifest.json").read_text()
+    )
+    assert second_manifest["cache_event_summary"]["hit_count"] > 0
+    assert second_manifest["cache_event_summary"]["miss_count"] == 0
+    assert second_manifest["cache_flush_summary"]["failed"] == 0
+
+
+def test_chip_factor_runner_live_mode_writes_cache_events_and_restores_handler(tmp_path: Path) -> None:
+    client = CacheEventFactorDataClient()
+    original_handler = lambda event: None
+    client.set_cache_event_handler(original_handler)
+
+    run_factor_production(
+        stock_codes=["000001.SZ"],
+        factor_start_date="20260105",
+        factor_end_date="20260107",
+        artifact_root=tmp_path / "factor-runs",
+        cache_root=tmp_path / "factor-cache",
+        run_id="factor-run-cache-events-test",
+        dry_run=False,
+        data_client=client,
+        warmup_trading_days=20,
+    )
+
+    run_dir = tmp_path / "factor-runs" / "factor-run-cache-events-test"
+    assert client.cache_event_handler is original_handler
+    cache_events = [
+        json.loads(line)
+        for line in (run_dir / "cache-events.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    assert cache_events[0]["factor_run_id"] == "factor-run-cache-events-test"
+    assert cache_events[0]["source"] == "market_data_cache"
+    assert cache_events[0]["endpoint"] == "daily"
+    assert cache_events[0]["hit_count"] == 2
+    manifest = json.loads((run_dir / "factor-run-manifest.json").read_text())
+    assert manifest["cache_event_summary"] == {
+        "cache_event_count": 1,
+        "endpoint_count": 1,
+        "endpoints": ["daily"],
+        "hit_count": 2,
+        "miss_count": 1,
+        "stale_count": 0,
+        "fetched_date_count": 1,
+        "suppressed_no_data_count": 0,
+    }
+
+
+def test_chip_factor_runner_surfaces_cache_flush_failures_in_manifest(tmp_path: Path) -> None:
+    client = CacheFlushFailureFactorDataClient()
+
+    result = run_factor_production(
+        stock_codes=["000001.SZ"],
+        factor_start_date="20260105",
+        factor_end_date="20260107",
+        artifact_root=tmp_path / "factor-runs",
+        cache_root=tmp_path / "factor-cache",
+        run_id="factor-run-cache-flush-failure-test",
+        dry_run=False,
+        data_client=client,
+        warmup_trading_days=20,
+    )
+
+    run_dir = tmp_path / "factor-runs" / "factor-run-cache-flush-failure-test"
+    manifest = json.loads((run_dir / "factor-run-manifest.json").read_text())
+    worker_events = [
+        json.loads(line)
+        for line in (run_dir / "worker-events.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    assert result["status"] == "completed_with_cache_warnings"
+    assert manifest["status"] == "completed_with_cache_warnings"
+    assert manifest["cache_flush_summary"] == {"succeeded": 2, "failed": 1}
+    assert worker_events[-1]["status"] == "completed_with_cache_warnings"
+
+
 def test_chip_factor_runner_live_mode_restores_retry_handler_when_api_call_fails(tmp_path: Path) -> None:
     client = FailingFactorDataClient()
     original_handler = lambda event: None
@@ -439,6 +578,90 @@ class FailingFactorDataClient(FakeFactorDataClient):
         raise RuntimeError("temporary failure")
 
 
+class CacheEventFactorDataClient(FakeFactorDataClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.cache_event_handler = None
+
+    def set_cache_event_handler(self, handler: object) -> None:
+        self.cache_event_handler = handler
+
+    def get_daily_prices(self, ts_code: str, start_date: str, end_date: str) -> list[DailyPriceBar]:
+        if self.cache_event_handler is not None:
+            self.cache_event_handler(
+                {
+                    "endpoint": "daily",
+                    "ts_code": ts_code,
+                    "hit_count": 2,
+                    "miss_count": 1,
+                    "stale_count": 0,
+                    "fetched_date_count": 1,
+                    "suppressed_no_data_count": 0,
+                }
+            )
+        return super().get_daily_prices(ts_code, start_date, end_date)
+
+
+class CacheFlushFailureFactorDataClient(FakeFactorDataClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.cache_writer = FailingCacheWriter()
+
+
+class FailingCacheWriter:
+    def flush(self) -> CacheFlushResult:
+        return CacheFlushResult(succeeded=2, failed=1)
+
+
+class CountingProvider:
+    trade_calendar_call_count = 0
+    daily_call_count = 0
+    chip_call_count = 0
+
+    @classmethod
+    def reset(cls) -> None:
+        cls.trade_calendar_call_count = 0
+        cls.daily_call_count = 0
+        cls.chip_call_count = 0
+
+    def get_trade_calendar(self, start_date: str, end_date: str) -> list[dict[str, object]]:
+        type(self).trade_calendar_call_count += 1
+        return [
+            {"cal_date": calendar_date, "is_open": _is_weekday(calendar_date)}
+            for calendar_date in _calendar_dates(start_date, end_date)
+        ]
+
+    def get_daily_prices(self, ts_code: str, start_date: str, end_date: str) -> list[DailyPriceBar]:
+        type(self).daily_call_count += 1
+        return [
+            DailyPriceBar(
+                ts_code=ts_code,
+                trade_date=trade_date,
+                open=10 + index,
+                high=12 + index,
+                low=9 + index,
+                close=11.5 + index,
+                vol=1000 + index,
+                amount=10000 + index,
+            )
+            for index, trade_date in enumerate(_weekday_dates(start_date, end_date))
+        ]
+
+    def get_chip_distribution(self, ts_code: str, start_date: str, end_date: str) -> list[ChipDistributionPoint]:
+        type(self).chip_call_count += 1
+        rows: list[ChipDistributionPoint] = []
+        for index, trade_date in enumerate(_weekday_dates(start_date, end_date)):
+            base = 10 + index
+            rows.extend(
+                [
+                    ChipDistributionPoint(ts_code=ts_code, trade_date=trade_date, price=base, percent=20),
+                    ChipDistributionPoint(ts_code=ts_code, trade_date=trade_date, price=base + 1, percent=50),
+                    ChipDistributionPoint(ts_code=ts_code, trade_date=trade_date, price=base + 2, percent=30),
+                ]
+            )
+        return rows
+
+
 class PrivateTradingDaysFactorDataClient(FakeFactorDataClient):
     get_trading_days_between = None
 
@@ -477,3 +700,22 @@ class PrivateTradingDaysFactorDataClient(FakeFactorDataClient):
             )
             for index, trade_date in enumerate(self._trading_days_between(start_date, end_date))
         ]
+
+
+def _calendar_dates(start_date: str, end_date: str) -> list[str]:
+    start = datetime.strptime(start_date, "%Y%m%d").date()
+    end = datetime.strptime(end_date, "%Y%m%d").date()
+    dates = []
+    current = start
+    while current <= end:
+        dates.append(current.strftime("%Y%m%d"))
+        current += timedelta(days=1)
+    return dates
+
+
+def _weekday_dates(start_date: str, end_date: str) -> list[str]:
+    return [date for date in _calendar_dates(start_date, end_date) if _is_weekday(date)]
+
+
+def _is_weekday(date: str) -> bool:
+    return datetime.strptime(date, "%Y%m%d").weekday() < 5

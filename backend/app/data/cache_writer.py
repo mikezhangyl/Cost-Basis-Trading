@@ -64,6 +64,24 @@ class CacheWriter:
         return CacheWriteResult(status="enqueued", job_id=job_id)
 
     def flush(self) -> CacheFlushResult:
+        with self._flush_lock:
+            return self._flush_pending_jobs_unlocked()
+
+    def _schedule_flush_locked(self) -> None:
+        if self._flush_thread is not None and self._flush_thread.is_alive():
+            return
+        self._flush_thread = threading.Thread(target=self._flush_until_idle, daemon=True)
+        self._flush_thread.start()
+
+    def _flush_until_idle(self) -> None:
+        while True:
+            with self._flush_lock:
+                self._flush_pending_jobs_unlocked()
+                if self.store.count_pending_jobs() == 0:
+                    self._flush_thread = None
+                    return
+
+    def _flush_pending_jobs_unlocked(self) -> CacheFlushResult:
         succeeded = 0
         failed = 0
         for job in self.store.pending_jobs():
@@ -89,20 +107,6 @@ class CacheWriter:
                 failed += 1
                 self.store.mark_job_failed(job_id, _sanitize_error_message(str(last_error)))
         return CacheFlushResult(succeeded=succeeded, failed=failed)
-
-    def _schedule_flush_locked(self) -> None:
-        if self._flush_thread is not None and self._flush_thread.is_alive():
-            return
-        self._flush_thread = threading.Thread(target=self._flush_until_idle, daemon=True)
-        self._flush_thread.start()
-
-    def _flush_until_idle(self) -> None:
-        while True:
-            self.flush()
-            with self._flush_lock:
-                if self.store.count_pending_jobs() == 0:
-                    self._flush_thread = None
-                    return
 
 
 def _sanitize_error_message(message: str, max_length: int = 500) -> str:

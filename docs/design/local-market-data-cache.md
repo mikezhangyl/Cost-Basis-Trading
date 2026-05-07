@@ -505,9 +505,9 @@ Implemented pieces:
 3. Price adjustment tests around dividend/ex-right-like raw close drops.
 4. Scan, backtest, and research-run construction through `build_market_data_client()`.
 5. Research-run `cache-events.jsonl` and run-manifest cache-event summaries.
+6. Factor runner construction through `build_market_data_client()`, with runner-level `cache-events.jsonl`, `cache_event_summary`, and `cache_flush_summary`.
 
 Remaining pieces:
 
-1. Wire `scripts/chip_factor_runner.py` through `build_market_data_client()` once that runner exists in this worktree.
-2. Run a tiny live provider smoke test and inspect the generated SQLite cache.
-3. Add manual cache-inspection CLI commands after the core path has live-run evidence.
+1. Run a tiny live provider smoke test from the runner integration branch and inspect the generated SQLite cache.
+2. Add manual cache-inspection CLI commands after the core path has live-run evidence.

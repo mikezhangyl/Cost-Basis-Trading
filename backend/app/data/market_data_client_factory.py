@@ -11,14 +11,14 @@ from app.data.market_cache import MarketCacheStore
 from app.data.tushare_client import TushareMarketDataClient
 
 
-def build_market_data_client(provider_client: Any | None = None) -> Any:
+def build_market_data_client(provider_client: Any | None = None, cache_path: Path | None = None) -> Any:
     load_environment()
     provider = provider_client or TushareMarketDataClient()
     if not _cache_enabled():
         return provider
 
     cache_store = MarketCacheStore(
-        _cache_path(),
+        cache_path or _cache_path(),
         recent_refresh_days=_int_env("MARKET_DATA_CACHE_RECENT_REFRESH_DAYS", 10),
         provisional_no_data_ttl_seconds=_int_env("MARKET_DATA_CACHE_PROVISIONAL_NO_DATA_TTL_SECONDS", 24 * 60 * 60),
     )

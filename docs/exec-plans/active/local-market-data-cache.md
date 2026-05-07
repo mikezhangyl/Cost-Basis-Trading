@@ -214,7 +214,7 @@ Acceptance tests:
 - cache hit/miss summary appears in worker or cache event logs,
 - repeated run over same fake data avoids repeated provider calls.
 
-Note: `scripts/chip_factor_runner.py` is not present in this worktree. The reusable factory and service integration are implemented first so the runner can use the same cache path once that script is available.
+Status: implemented in the runner integration branch. The runner now uses `build_market_data_client()` for live runs, writes `cache-events.jsonl`, records `cache_event_summary` and `cache_flush_summary`, surfaces cache persistence failures as `completed_with_cache_warnings`, and has a default async integration test covering repeated runs over the same SQLite cache.
 
 ## Configuration
 
