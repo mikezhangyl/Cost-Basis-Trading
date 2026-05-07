@@ -507,7 +507,8 @@ Implemented pieces:
 5. Research-run `cache-events.jsonl` and run-manifest cache-event summaries.
 6. Factor runner construction through `build_market_data_client()`, with runner-level `cache-events.jsonl`, `cache_event_summary`, and `cache_flush_summary`.
 7. Live runner smoke over `000001.SZ` for 2024-04-15 to 2024-04-17: the second run over the same cache root had `miss_count=0`, `fetched_date_count=0`, and cache flush failures at zero.
+8. Read-only manual inspection CLI at `scripts/market_cache_inspect.py` for summary, current-entry, and write-job metadata without printing cached payloads.
 
 Remaining pieces:
 
-1. Add manual cache-inspection CLI commands after the core path has live-run evidence.
+1. Add explicit invalidation/refresh commands only after a real manual-review workflow is defined.

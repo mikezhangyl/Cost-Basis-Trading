@@ -263,6 +263,16 @@ Before trusting live provider runs:
 8. Inspect cache DB and artifact cache-event logs.
 9. Add manual CLI inspection commands only after the core cache path is stable.
 
+Status: rollout steps 1-9 are implemented in the runner integration branch. Use:
+
+```text
+python scripts/market_cache_inspect.py summary --cache-path data/market-cache/market_data.sqlite3
+python scripts/market_cache_inspect.py entries --cache-path data/market-cache/market_data.sqlite3 --endpoint daily --instrument-id 000001.SZ
+python scripts/market_cache_inspect.py jobs --cache-path data/market-cache/market_data.sqlite3 --status FAILED_PERMANENT
+```
+
+The inspection CLI is intentionally read-only and omits cached payload/source-param JSON from output.
+
 ## Acceptance Criteria
 
 - Repeating the same factor run date range does not call the provider for already cached daily/chip dates.
