@@ -124,8 +124,8 @@ class CacheEventResearchRunClient(FakeResearchRunClient):
                     "end_date": end_date,
                     "requested_date_count": 5,
                     "hit_count": 2,
-                    "miss_count": 3,
-                    "stale_count": 0,
+                    "miss_count": 2,
+                    "stale_count": 1,
                     "suppressed_no_data_count": 0,
                     "fetched_date_count": 3,
                     "returned_row_count": len(rows),
@@ -349,7 +349,8 @@ def test_research_run_service_writes_cache_events(tmp_path: Path) -> None:
     assert cache_events[0]["source"] == "market_data_cache"
     assert cache_events[0]["endpoint"] == "daily"
     assert cache_events[0]["hit_count"] == 2
-    assert cache_events[0]["miss_count"] == 3
+    assert cache_events[0]["miss_count"] == 2
+    assert cache_events[0]["stale_count"] == 1
     assert cache_events[0]["write_status_counts"] == {"enqueued": 3}
 
     manifest = json.loads((run_dir / "run-manifest.json").read_text())
@@ -357,12 +358,44 @@ def test_research_run_service_writes_cache_events(tmp_path: Path) -> None:
         "cache_event_count": 2,
         "endpoint_count": 1,
         "endpoints": ["daily"],
+        "request_count": 10,
         "hit_count": 4,
-        "miss_count": 6,
-        "stale_count": 0,
+        "miss_count": 4,
+        "hit_rate_percent": 40.0,
+        "miss_rate_percent": 40.0,
+        "stale_count": 2,
+        "stale_rate_percent": 20.0,
         "fetched_date_count": 6,
         "suppressed_no_data_count": 0,
     }
+    sample_score = json.loads(
+        (run_dir / "samples" / result.samples[0].sample_id / "backtest" / "backtest_score.json").read_text()
+    )
+    assert sample_score["cache_event_summary"] == {
+        "cache_event_count": 1,
+        "endpoint_count": 1,
+        "endpoints": ["daily"],
+        "request_count": 5,
+        "hit_count": 2,
+        "miss_count": 2,
+        "hit_rate_percent": 40.0,
+        "miss_rate_percent": 40.0,
+        "stale_count": 1,
+        "stale_rate_percent": 20.0,
+        "fetched_date_count": 3,
+        "suppressed_no_data_count": 0,
+    }
+    sample_manifest = json.loads(
+        (run_dir / "samples" / result.samples[0].sample_id / "backtest" / "manifest.json").read_text()
+    )
+    assert sample_manifest["cache_event_summary"]["hit_rate_percent"] == 40.0
+    report_text = (run_dir / "aggregate" / "final_report.md").read_text()
+    assert "## Cache Usage Summary" in report_text
+    assert "Overall cache hit rate: 40.0% (4/10 requested cache lookups)." in report_text
+    assert "Stale cache lookups: 2 (20.0%)." in report_text
+    assert "Fetched date count: 6." in report_text
+    ai_review = json.loads((run_dir / "aggregate" / "ai_review.json").read_text())
+    assert ai_review["cache_event_summary"] == manifest["cache_event_summary"]
     assert market_data_client.cache_event_handler is None
 
 

@@ -164,6 +164,7 @@ class ResearchRunService:
                 }
 
         ai_review = _ensure_report_observation_coverage(ai_review, samples)
+        ai_review = _append_cache_usage_section(ai_review, _summarize_cache_events(run_dir / "cache-events.jsonl"))
         _write_json(aggregate_dir / "ai_review.json", _redact_sensitive_review(ai_review))
         _write_jsonl(
             aggregate_dir / "agent-decisions.jsonl",
@@ -208,6 +209,7 @@ class ResearchRunService:
                 BacktestRequest(stock_code=ts_code, start_date=start_date, window_days=request.window_days)
             )
         finally:
+            cache_event_summary = logging_client.cache_event_summary()
             logging_client.close()
 
         feature_set = _build_feature_set(backtest)
@@ -285,6 +287,7 @@ class ResearchRunService:
             {
                 "run_id": run_id,
                 "sample_id": sample_id,
+                "cache_event_summary": cache_event_summary,
                 "strategy_scores": [score.model_dump(mode="json") for score in strategy_scores],
             },
         )
@@ -298,6 +301,7 @@ class ResearchRunService:
             output_refs=[f"samples/{sample_id}/backtest/backtest_score.json"],
             row_counts={},
             date_coverage={"future_offsets": OBSERVATION_OFFSETS},
+            cache_event_summary=cache_event_summary,
         )
 
         return ResearchSampleResult(
@@ -326,6 +330,7 @@ class LoggingMarketDataClient:
         self.cache_event_log = cache_event_log
         self.run_id = run_id
         self.sample_id = sample_id
+        self.cache_events: list[dict[str, Any]] = []
         self.supports_adjustment_factors = callable(getattr(wrapped, "get_adjustment_factors", None))
         set_retry_event_handler = getattr(wrapped, "set_retry_event_handler", None)
         self.previous_retry_event_handler = getattr(wrapped, "retry_event_handler", None)
@@ -429,16 +434,21 @@ class LoggingMarketDataClient:
         )
 
     def _record_cache_event(self, event: dict[str, Any]) -> None:
+        payload = {
+            "timestamp": _now_iso(),
+            "run_id": self.run_id,
+            "sample_id": self.sample_id,
+            "source": "market_data_cache",
+            **event,
+        }
+        self.cache_events.append(payload)
         _append_jsonl(
             self.cache_event_log,
-            {
-                "timestamp": _now_iso(),
-                "run_id": self.run_id,
-                "sample_id": self.sample_id,
-                "source": "market_data_cache",
-                **event,
-            },
+            payload,
         )
+
+    def cache_event_summary(self) -> dict[str, Any]:
+        return _summarize_cache_event_rows(self.cache_events)
 
 
 def _build_feature_set(backtest: BacktestResponse) -> dict[str, Any]:
@@ -646,6 +656,32 @@ def _ensure_report_observation_coverage(
     return {**ai_review, "final_report": corrected_report, "report_validation": validation}
 
 
+def _append_cache_usage_section(ai_review: dict[str, Any], cache_summary: dict[str, Any]) -> dict[str, Any]:
+    report = str(ai_review.get("final_report", "")).strip()
+    request_count = int(cache_summary.get("request_count") or 0)
+    hit_count = int(cache_summary.get("hit_count") or 0)
+    miss_count = int(cache_summary.get("miss_count") or 0)
+    stale_count = int(cache_summary.get("stale_count") or 0)
+    hit_rate = float(cache_summary.get("hit_rate_percent") or 0.0)
+    miss_rate = float(cache_summary.get("miss_rate_percent") or 0.0)
+    stale_rate = float(cache_summary.get("stale_rate_percent") or 0.0)
+    fetched_count = int(cache_summary.get("fetched_date_count") or 0)
+    endpoint_count = int(cache_summary.get("endpoint_count") or 0)
+    endpoints = ", ".join(str(endpoint) for endpoint in cache_summary.get("endpoints", [])) or "none"
+    section = "\n".join(
+        [
+            "## Cache Usage Summary",
+            "",
+            f"Overall cache hit rate: {hit_rate}% ({hit_count}/{request_count} requested cache lookups).",
+            f"Cache misses: {miss_count} ({miss_rate}%). Stale cache lookups: {stale_count} ({stale_rate}%).",
+            f"Fetched date count: {fetched_count}.",
+            f"Endpoints covered: {endpoint_count} ({endpoints}).",
+        ]
+    )
+    final_report = "\n\n".join(part for part in [report, section] if part).strip()
+    return {**ai_review, "final_report": final_report, "cache_event_summary": cache_summary}
+
+
 def _build_deterministic_observation_section(
     samples: list[ResearchSampleResult],
     observation_labels: list[str],
@@ -737,23 +773,24 @@ def _write_manifest(
     output_refs: list[str],
     row_counts: dict[str, int],
     date_coverage: dict[str, Any],
+    cache_event_summary: dict[str, Any] | None = None,
 ) -> None:
-    _write_json(
-        path,
-        {
-            "run_id": run_id,
-            "sample_id": sample_id,
-            "stage": stage,
-            "status": "completed",
-            "created_at": _now_iso(),
-            "input_refs": input_refs,
-            "output_refs": output_refs,
-            "row_counts": row_counts,
-            "date_coverage": date_coverage,
-            "checksum": {ref: _sha256_for_path(run_dir / ref) for ref in output_refs},
-            "error": None,
-        },
-    )
+    payload = {
+        "run_id": run_id,
+        "sample_id": sample_id,
+        "stage": stage,
+        "status": "completed",
+        "created_at": _now_iso(),
+        "input_refs": input_refs,
+        "output_refs": output_refs,
+        "row_counts": row_counts,
+        "date_coverage": date_coverage,
+        "checksum": {ref: _sha256_for_path(run_dir / ref) for ref in output_refs},
+        "error": None,
+    }
+    if cache_event_summary is not None:
+        payload = {**payload, "cache_event_summary": cache_event_summary}
+    _write_json(path, payload)
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -828,14 +865,26 @@ def _summarize_cache_events(path: Path) -> dict[str, Any]:
         for line in path.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
+    return _summarize_cache_event_rows(events)
+
+
+def _summarize_cache_event_rows(events: list[dict[str, Any]]) -> dict[str, Any]:
     endpoints = sorted({str(event.get("endpoint")) for event in events if event.get("endpoint")})
+    hit_count = _sum_event_int(events, "hit_count")
+    miss_count = _sum_event_int(events, "miss_count")
+    stale_count = _sum_event_int(events, "stale_count")
+    request_count = hit_count + miss_count + stale_count
     return {
         "cache_event_count": len(events),
         "endpoint_count": len(endpoints),
         "endpoints": endpoints,
-        "hit_count": _sum_event_int(events, "hit_count"),
-        "miss_count": _sum_event_int(events, "miss_count"),
-        "stale_count": _sum_event_int(events, "stale_count"),
+        "request_count": request_count,
+        "hit_count": hit_count,
+        "miss_count": miss_count,
+        "hit_rate_percent": _percent(hit_count, request_count),
+        "miss_rate_percent": _percent(miss_count, request_count),
+        "stale_count": stale_count,
+        "stale_rate_percent": _percent(stale_count, request_count),
         "fetched_date_count": _sum_event_int(events, "fetched_date_count"),
         "suppressed_no_data_count": _sum_event_int(events, "suppressed_no_data_count"),
     }
@@ -846,9 +895,13 @@ def _empty_cache_event_summary() -> dict[str, Any]:
         "cache_event_count": 0,
         "endpoint_count": 0,
         "endpoints": [],
+        "request_count": 0,
         "hit_count": 0,
         "miss_count": 0,
+        "hit_rate_percent": 0.0,
+        "miss_rate_percent": 0.0,
         "stale_count": 0,
+        "stale_rate_percent": 0.0,
         "fetched_date_count": 0,
         "suppressed_no_data_count": 0,
     }
@@ -856,6 +909,12 @@ def _empty_cache_event_summary() -> dict[str, Any]:
 
 def _sum_event_int(events: list[dict[str, Any]], key: str) -> int:
     return sum(int(event.get(key) or 0) for event in events)
+
+
+def _percent(numerator: int, denominator: int) -> float:
+    if denominator <= 0:
+        return 0.0
+    return round(numerator / denominator * 100, 2)
 
 
 def _default_artifact_root() -> Path:
