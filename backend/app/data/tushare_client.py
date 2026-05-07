@@ -100,15 +100,27 @@ class TushareMarketDataClient:
         ]
 
     def _trading_days_between(self, start_date: str, end_date: str) -> list[str]:
-        data = self._call_tushare(
-            "trade_cal",
-            lambda: self.pro.trade_cal(exchange="SSE", start_date=start_date, end_date=end_date, is_open="1"),
-            {"exchange": "SSE", "start_date": start_date, "end_date": end_date, "is_open": "1"},
-        )
-        dates = sorted(str(item) for item in data["cal_date"].tolist())
+        rows = self.get_trade_calendar(start_date, end_date)
+        dates = sorted(str(row["cal_date"]) for row in rows if bool(row["is_open"]))
         if not dates:
             raise DataUnavailableError(DataErrorCode.EMPTY_DATA, "No trading days found for cyq_chips range.")
         return dates
+
+    def get_trade_calendar(self, start_date: str, end_date: str) -> list[dict[str, object]]:
+        data = self._call_tushare(
+            "trade_cal",
+            lambda: self.pro.trade_cal(exchange="SSE", start_date=start_date, end_date=end_date),
+            {"exchange": "SSE", "start_date": start_date, "end_date": end_date},
+        )
+        if data.empty:
+            raise DataUnavailableError(DataErrorCode.EMPTY_DATA, "No trading calendar rows returned.")
+        return [
+            {
+                "cal_date": str(row["cal_date"]),
+                "is_open": str(row["is_open"]) == "1",
+            }
+            for _, row in data.iterrows()
+        ]
 
     def get_daily_prices(self, ts_code: str, start_date: str, end_date: str) -> list[DailyPriceBar]:
         data = self._call_tushare(

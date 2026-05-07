@@ -8,10 +8,11 @@ class FakePro:
     def __init__(self) -> None:
         self.cyq_calls: list[dict[str, str]] = []
 
-    def trade_cal(self, exchange: str, start_date: str, end_date: str, is_open: str):
+    def trade_cal(self, exchange: str, start_date: str, end_date: str, is_open: str | None = None):
         return pd.DataFrame(
             {
                 "cal_date": ["20260415", "20260416", "20260417"],
+                "is_open": [1, 1, 1],
             }
         )
 
@@ -65,6 +66,27 @@ def test_get_adjustment_factors_normalizes_tushare_rows() -> None:
 
     assert [row.trade_date for row in rows] == ["20260415", "20260417"]
     assert [row.adj_factor for row in rows] == [1.0, 2.0]
+
+
+def test_get_trade_calendar_normalizes_tushare_rows() -> None:
+    class CalendarPro(FakePro):
+        def trade_cal(self, exchange: str, start_date: str, end_date: str, is_open: str | None = None):
+            assert is_open is None
+            return pd.DataFrame(
+                {
+                    "cal_date": ["20260415", "20260416"],
+                    "is_open": [1, 0],
+                }
+            )
+
+    client = FakeTushareClient(CalendarPro())
+
+    rows = client.get_trade_calendar("20260415", "20260416")
+
+    assert rows == [
+        {"cal_date": "20260415", "is_open": True},
+        {"cal_date": "20260416", "is_open": False},
+    ]
 
 
 class TransientCyqPro(FakePro):
