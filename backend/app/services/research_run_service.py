@@ -8,6 +8,7 @@ from time import perf_counter
 from typing import Any
 from uuid import uuid4
 
+from app.data.cache_event_summary import summarize_cache_event_rows, summarize_cache_events_jsonl
 from app.domain.models import (
     BacktestRequest,
     BacktestResponse,
@@ -124,7 +125,7 @@ class ResearchRunService:
                 ],
                 "logged_market_data_call_count": _count_jsonl_rows(api_call_log),
                 "api_retry_summary": _summarize_api_retries(api_retry_log),
-                "cache_event_summary": _summarize_cache_events(cache_event_log),
+                "cache_event_summary": summarize_cache_events_jsonl(cache_event_log),
                 "aggregate_scores": [score.model_dump(mode="json") for score in aggregate_scores],
                 "ai_review_status": ai_review["status"],
             },
@@ -164,7 +165,7 @@ class ResearchRunService:
                 }
 
         ai_review = _ensure_report_observation_coverage(ai_review, samples)
-        ai_review = _append_cache_usage_section(ai_review, _summarize_cache_events(run_dir / "cache-events.jsonl"))
+        ai_review = _append_cache_usage_section(ai_review, summarize_cache_events_jsonl(run_dir / "cache-events.jsonl"))
         _write_json(aggregate_dir / "ai_review.json", _redact_sensitive_review(ai_review))
         _write_jsonl(
             aggregate_dir / "agent-decisions.jsonl",
@@ -448,7 +449,7 @@ class LoggingMarketDataClient:
         )
 
     def cache_event_summary(self) -> dict[str, Any]:
-        return _summarize_cache_event_rows(self.cache_events)
+        return summarize_cache_event_rows(self.cache_events)
 
 
 def _build_feature_set(backtest: BacktestResponse) -> dict[str, Any]:
@@ -855,66 +856,6 @@ def _summarize_api_retries(path: Path) -> dict[str, Any]:
         "final_failure_count": len(final_failure_events),
         "had_retry": bool(retry_events),
     }
-
-
-def _summarize_cache_events(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return _empty_cache_event_summary()
-    events = [
-        json.loads(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
-    return _summarize_cache_event_rows(events)
-
-
-def _summarize_cache_event_rows(events: list[dict[str, Any]]) -> dict[str, Any]:
-    endpoints = sorted({str(event.get("endpoint")) for event in events if event.get("endpoint")})
-    hit_count = _sum_event_int(events, "hit_count")
-    miss_count = _sum_event_int(events, "miss_count")
-    stale_count = _sum_event_int(events, "stale_count")
-    request_count = hit_count + miss_count + stale_count
-    return {
-        "cache_event_count": len(events),
-        "endpoint_count": len(endpoints),
-        "endpoints": endpoints,
-        "request_count": request_count,
-        "hit_count": hit_count,
-        "miss_count": miss_count,
-        "hit_rate_percent": _percent(hit_count, request_count),
-        "miss_rate_percent": _percent(miss_count, request_count),
-        "stale_count": stale_count,
-        "stale_rate_percent": _percent(stale_count, request_count),
-        "fetched_date_count": _sum_event_int(events, "fetched_date_count"),
-        "suppressed_no_data_count": _sum_event_int(events, "suppressed_no_data_count"),
-    }
-
-
-def _empty_cache_event_summary() -> dict[str, Any]:
-    return {
-        "cache_event_count": 0,
-        "endpoint_count": 0,
-        "endpoints": [],
-        "request_count": 0,
-        "hit_count": 0,
-        "miss_count": 0,
-        "hit_rate_percent": 0.0,
-        "miss_rate_percent": 0.0,
-        "stale_count": 0,
-        "stale_rate_percent": 0.0,
-        "fetched_date_count": 0,
-        "suppressed_no_data_count": 0,
-    }
-
-
-def _sum_event_int(events: list[dict[str, Any]], key: str) -> int:
-    return sum(int(event.get(key) or 0) for event in events)
-
-
-def _percent(numerator: int, denominator: int) -> float:
-    if denominator <= 0:
-        return 0.0
-    return round(numerator / denominator * 100, 2)
 
 
 def _default_artifact_root() -> Path:

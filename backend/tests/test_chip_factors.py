@@ -9,6 +9,7 @@ import pytest
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from app.data import market_data_client_factory
+from app.data.cache_event_summary import CACHE_EVENT_SUMMARY_KEYS
 from app.data.cache_writer import CacheFlushResult
 from app.domain.models import ChipDistributionPoint, DailyPriceBar
 from app.factors.chip_factors import ACTIVE_FACTOR_IDS, PRUNED_FACTOR_IDS, build_daily_chip_snapshot, build_factor_values
@@ -429,6 +430,7 @@ def test_chip_factor_runner_live_mode_writes_cache_events_and_restores_handler(t
     assert cache_events[0]["endpoint"] == "daily"
     assert cache_events[0]["hit_count"] == 2
     manifest = json.loads((run_dir / "factor-run-manifest.json").read_text())
+    assert list(manifest["cache_event_summary"]) == list(CACHE_EVENT_SUMMARY_KEYS)
     assert manifest["cache_event_summary"] == {
         "cache_event_count": 1,
         "endpoint_count": 1,

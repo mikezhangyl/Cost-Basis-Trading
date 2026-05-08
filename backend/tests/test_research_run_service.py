@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+from app.data.cache_event_summary import CACHE_EVENT_SUMMARY_KEYS
 from app.domain.models import ChipDistributionPoint, DailyPriceBar, ResearchRunRequest
 from app.services.research_run_service import ResearchRunService
 
@@ -354,6 +355,7 @@ def test_research_run_service_writes_cache_events(tmp_path: Path) -> None:
     assert cache_events[0]["write_status_counts"] == {"enqueued": 3}
 
     manifest = json.loads((run_dir / "run-manifest.json").read_text())
+    assert list(manifest["cache_event_summary"]) == list(CACHE_EVENT_SUMMARY_KEYS)
     assert manifest["cache_event_summary"] == {
         "cache_event_count": 2,
         "endpoint_count": 1,
@@ -371,6 +373,7 @@ def test_research_run_service_writes_cache_events(tmp_path: Path) -> None:
     sample_score = json.loads(
         (run_dir / "samples" / result.samples[0].sample_id / "backtest" / "backtest_score.json").read_text()
     )
+    assert list(sample_score["cache_event_summary"]) == list(CACHE_EVENT_SUMMARY_KEYS)
     assert sample_score["cache_event_summary"] == {
         "cache_event_count": 1,
         "endpoint_count": 1,
@@ -388,6 +391,7 @@ def test_research_run_service_writes_cache_events(tmp_path: Path) -> None:
     sample_manifest = json.loads(
         (run_dir / "samples" / result.samples[0].sample_id / "backtest" / "manifest.json").read_text()
     )
+    assert list(sample_manifest["cache_event_summary"]) == list(CACHE_EVENT_SUMMARY_KEYS)
     assert sample_manifest["cache_event_summary"]["hit_rate_percent"] == 40.0
     report_text = (run_dir / "aggregate" / "final_report.md").read_text()
     assert "## Cache Usage Summary" in report_text
@@ -395,6 +399,7 @@ def test_research_run_service_writes_cache_events(tmp_path: Path) -> None:
     assert "Stale cache lookups: 2 (20.0%)." in report_text
     assert "Fetched date count: 6." in report_text
     ai_review = json.loads((run_dir / "aggregate" / "ai_review.json").read_text())
+    assert list(ai_review["cache_event_summary"]) == list(CACHE_EVENT_SUMMARY_KEYS)
     assert ai_review["cache_event_summary"] == manifest["cache_event_summary"]
     assert market_data_client.cache_event_handler is None
 

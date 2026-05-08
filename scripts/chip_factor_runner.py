@@ -12,6 +12,7 @@ from uuid import uuid4
 
 sys.path.append(str(Path(__file__).resolve().parents[1] / "backend"))
 
+from app.data.cache_event_summary import summarize_cache_events_jsonl
 from app.data.market_data_client_factory import build_market_data_client
 from app.domain.models import ChipDistributionPoint, DailyPriceBar
 from app.factors.chip_factors import (
@@ -153,7 +154,7 @@ def run_factor_production(
             "cache-events.jsonl",
             "worker-events.jsonl",
         ],
-        "cache_event_summary": _summarize_cache_events(run_dir / "cache-events.jsonl"),
+        "cache_event_summary": summarize_cache_events_jsonl(run_dir / "cache-events.jsonl"),
         "cache_flush_summary": cache_flush_summary,
         "stock_outputs": stock_outputs,
     }
@@ -546,64 +547,8 @@ def _weekday_dates(start_date: str, end_date: str) -> list[str]:
     return dates
 
 
-def _summarize_cache_events(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return _empty_cache_event_summary()
-    events = [
-        json.loads(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
-    endpoints = sorted({str(event.get("endpoint")) for event in events if event.get("endpoint")})
-    hit_count = _sum_event_int(events, "hit_count")
-    miss_count = _sum_event_int(events, "miss_count")
-    stale_count = _sum_event_int(events, "stale_count")
-    request_count = hit_count + miss_count + stale_count
-    return {
-        "cache_event_count": len(events),
-        "endpoint_count": len(endpoints),
-        "endpoints": endpoints,
-        "request_count": request_count,
-        "hit_count": hit_count,
-        "miss_count": miss_count,
-        "hit_rate_percent": _percent(hit_count, request_count),
-        "miss_rate_percent": _percent(miss_count, request_count),
-        "stale_count": stale_count,
-        "stale_rate_percent": _percent(stale_count, request_count),
-        "fetched_date_count": _sum_event_int(events, "fetched_date_count"),
-        "suppressed_no_data_count": _sum_event_int(events, "suppressed_no_data_count"),
-    }
-
-
-def _empty_cache_event_summary() -> dict[str, Any]:
-    return {
-        "cache_event_count": 0,
-        "endpoint_count": 0,
-        "endpoints": [],
-        "request_count": 0,
-        "hit_count": 0,
-        "miss_count": 0,
-        "hit_rate_percent": 0.0,
-        "miss_rate_percent": 0.0,
-        "stale_count": 0,
-        "stale_rate_percent": 0.0,
-        "fetched_date_count": 0,
-        "suppressed_no_data_count": 0,
-    }
-
-
 def _empty_cache_flush_summary() -> dict[str, int]:
     return {"succeeded": 0, "failed": 0}
-
-
-def _sum_event_int(events: list[dict[str, object]], key: str) -> int:
-    return sum(int(event.get(key) or 0) for event in events)
-
-
-def _percent(numerator: int, denominator: int) -> float:
-    if denominator <= 0:
-        return 0.0
-    return round(numerator / denominator * 100, 2)
 
 
 if __name__ == "__main__":
