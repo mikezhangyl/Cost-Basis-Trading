@@ -429,7 +429,8 @@ th {
 }
 
 .context-panel h4,
-.ai-review-panel h4 {
+.ai-review-panel h4,
+.cache-usage-panel h4 {
   margin: 0 0 6px;
   color: #25342c;
   font-size: 0.9rem;
@@ -437,7 +438,8 @@ th {
 
 .context-grid,
 .artifact-grid,
-.validation-grid {
+.validation-grid,
+.cache-usage-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(110px, 1fr));
   gap: 10px;
@@ -449,6 +451,10 @@ th {
 
 .validation-grid {
   grid-template-columns: minmax(130px, 0.6fr) minmax(220px, 1.6fr) minmax(180px, 1fr);
+}
+
+.cache-usage-grid {
+  grid-template-columns: minmax(130px, 0.8fr) repeat(5, minmax(110px, 1fr));
 }
 
 .context-item {
@@ -478,6 +484,14 @@ th {
   padding: 14px;
   border: 1px solid rgba(36, 54, 44, 0.14);
   background: #fbfcf8;
+}
+
+.cache-usage-panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(36, 54, 44, 0.14);
+  background: #f6f8f4;
 }
 
 .observation-coverage {
@@ -555,6 +569,10 @@ th {
   .context-grid,
   .artifact-grid,
   .validation-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .cache-usage-grid {
     grid-template-columns: 1fr;
   }
 }

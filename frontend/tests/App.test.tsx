@@ -125,6 +125,20 @@ const researchRunResponse = {
     observation_offsets: [1, 3, 5, 15, 30, 60, 90, 180],
     sample_count: 2,
     artifact_dir: "docs/research-runs/run-test-1",
+    cache_event_summary: {
+      cache_event_count: 5,
+      endpoint_count: 3,
+      endpoints: ["cyq_chips", "daily", "trade_cal"],
+      request_count: 171,
+      hit_count: 120,
+      miss_count: 46,
+      hit_rate_percent: 70.18,
+      miss_rate_percent: 26.9,
+      stale_count: 5,
+      stale_rate_percent: 2.92,
+      fetched_date_count: 46,
+      suppressed_no_data_count: 0
+    },
     ai_review: {
       status: "completed",
       model: "deepseek-v4-pro",
@@ -321,6 +335,15 @@ describe("App", () => {
     expect(screen.getByText("+1.80%")).toBeInTheDocument()
     expect(screen.getByText("docs/research-runs/run-test-1")).toBeInTheDocument()
     expect(screen.getByText("AI agent review")).toBeInTheDocument()
+    const cacheUsage = screen.getByLabelText("Cache usage")
+    expect(within(cacheUsage).getByText("Cache usage")).toBeInTheDocument()
+    expect(within(cacheUsage).getByText("70.18%")).toBeInTheDocument()
+    expect(within(cacheUsage).getByText("120 / 171")).toBeInTheDocument()
+    expect(within(cacheUsage).getByText("Miss")).toBeInTheDocument()
+    expect(within(cacheUsage).getByText("46 / 26.9%")).toBeInTheDocument()
+    expect(within(cacheUsage).getByText("Stale")).toBeInTheDocument()
+    expect(within(cacheUsage).getByText("5 / 2.92%")).toBeInTheDocument()
+    expect(within(cacheUsage).getByText("cyq_chips / daily / trade_cal")).toBeInTheDocument()
     expect(screen.getByText("completed / deepseek-v4-pro")).toBeInTheDocument()
     expect(screen.getByText("Report validation")).toBeInTheDocument()
     expect(screen.getByText("corrected")).toBeInTheDocument()
@@ -350,5 +373,27 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: /run research/i }))
 
     expect(await screen.findByText("Research run request failed: empty response from server.")).toBeInTheDocument()
+  })
+
+  it("renders a safe zero cache panel for older research responses without cache summary", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        ...researchRunResponse,
+        data: {
+          ...researchRunResponse.data,
+          cache_event_summary: undefined
+        }
+      })
+    } as Response)
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(screen.getByRole("button", { name: /run research/i }))
+
+    const cacheUsage = await screen.findByLabelText("Cache usage")
+    expect(within(cacheUsage).getByText("0%")).toBeInTheDocument()
+    expect(within(cacheUsage).getByText("0 / 0")).toBeInTheDocument()
+    expect(within(cacheUsage).getByText("No cache endpoints recorded")).toBeInTheDocument()
   })
 })

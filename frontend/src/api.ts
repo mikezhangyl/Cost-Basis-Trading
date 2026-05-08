@@ -69,6 +69,21 @@ export type BacktestResponse = {
   row_counts: Record<string, number>
 }
 
+export type CacheEventSummary = {
+  cache_event_count: number
+  endpoint_count: number
+  endpoints: string[]
+  request_count: number
+  hit_count: number
+  miss_count: number
+  hit_rate_percent: number
+  miss_rate_percent: number
+  stale_count: number
+  stale_rate_percent: number
+  fetched_date_count: number
+  suppressed_no_data_count: number
+}
+
 export type ResearchRunResponse = {
   run_id: string
   requested_at: string
@@ -78,6 +93,7 @@ export type ResearchRunResponse = {
   observation_offsets: number[]
   sample_count: number
   artifact_dir: string
+  cache_event_summary?: Partial<CacheEventSummary> | null
   ai_review: {
     status: "completed" | "skipped" | "failed"
     model: string | null
