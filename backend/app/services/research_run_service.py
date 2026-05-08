@@ -12,6 +12,7 @@ from app.data.cache_event_summary import summarize_cache_event_rows, summarize_c
 from app.domain.models import (
     BacktestRequest,
     BacktestResponse,
+    CacheEventSummary,
     ResearchAggregateScore,
     ResearchAiReviewSummary,
     ResearchObservationScore,
@@ -97,6 +98,7 @@ class ResearchRunService:
         aggregate_scores = _aggregate_scores(samples)
         stock_name = _stock_name_from_artifacts(run_dir, samples)
         ai_review = self._run_ai_research_agents(run_dir, run_id, ts_code, request, samples, aggregate_scores)
+        cache_event_summary = CacheEventSummary.model_validate(summarize_cache_events_jsonl(cache_event_log))
 
         response = ResearchRunResponse.create(
             run_id=run_id,
@@ -105,6 +107,7 @@ class ResearchRunService:
             window_days=request.window_days,
             observation_offsets=OBSERVATION_OFFSETS,
             artifact_dir=str(run_dir),
+            cache_event_summary=cache_event_summary,
             ai_review=_build_ai_review_summary(run_dir, ai_review),
             aggregate_scores=aggregate_scores,
             samples=samples,
@@ -125,7 +128,7 @@ class ResearchRunService:
                 ],
                 "logged_market_data_call_count": _count_jsonl_rows(api_call_log),
                 "api_retry_summary": _summarize_api_retries(api_retry_log),
-                "cache_event_summary": summarize_cache_events_jsonl(cache_event_log),
+                "cache_event_summary": cache_event_summary.model_dump(mode="json"),
                 "aggregate_scores": [score.model_dump(mode="json") for score in aggregate_scores],
                 "ai_review_status": ai_review["status"],
             },

@@ -1,7 +1,16 @@
 import { Activity, AlertTriangle, BarChart3, CheckCircle2, History, Loader2, Play, ShieldCheck } from "lucide-react"
 import { FormEvent, useMemo, useState } from "react"
 
-import { BacktestResponse, ResearchRunResponse, runBacktest, runResearchRun, runScan, ScanResponse, StockScanResult } from "./api"
+import {
+  BacktestResponse,
+  CacheEventSummary,
+  ResearchRunResponse,
+  runBacktest,
+  runResearchRun,
+  runScan,
+  ScanResponse,
+  StockScanResult
+} from "./api"
 
 const defaultCodes = "000001"
 
@@ -419,6 +428,7 @@ function ResearchRunView({ researchRun }: { researchRun: ResearchRunResponse }) 
       <div className="backtest-detail">
         <h3>{researchRun.ts_code} {researchRun.stock_name ?? ""}</h3>
         <p className="muted-text">{researchRun.artifact_dir}</p>
+        <CacheUsagePanel summary={researchRun.cache_event_summary} />
         <section className="ai-review-panel" aria-label="AI agent review">
           <div>
             <h4>AI agent review</h4>
@@ -504,6 +514,43 @@ function ResearchRunView({ researchRun }: { researchRun: ResearchRunResponse }) 
       </div>
     </div>
   )
+}
+
+function CacheUsagePanel({ summary }: { summary?: Partial<CacheEventSummary> | null }) {
+  const normalized = normalizeCacheSummary(summary)
+  return (
+    <section className="cache-usage-panel" aria-label="Cache usage">
+      <div>
+        <h4>Cache usage</h4>
+        <p className="muted-text">{normalized.endpoints.join(" / ") || "No cache endpoints recorded"}</p>
+      </div>
+      <div className="cache-usage-grid">
+        <Metric label="Hit rate" value={`${formatSummaryPercent(normalized.hit_rate_percent)}%`} tone="good" />
+        <ContextItem label="Hits" value={`${normalized.hit_count} / ${normalized.request_count}`} />
+        <ContextItem label="Miss" value={`${normalized.miss_count} / ${formatSummaryPercent(normalized.miss_rate_percent)}%`} />
+        <ContextItem label="Stale" value={`${normalized.stale_count} / ${formatSummaryPercent(normalized.stale_rate_percent)}%`} />
+        <ContextItem label="Fetched dates" value={String(normalized.fetched_date_count)} />
+        <ContextItem label="No data" value={String(normalized.suppressed_no_data_count)} />
+      </div>
+    </section>
+  )
+}
+
+function normalizeCacheSummary(summary?: Partial<CacheEventSummary> | null): CacheEventSummary {
+  return {
+    cache_event_count: numberOrZero(summary?.cache_event_count),
+    endpoint_count: numberOrZero(summary?.endpoint_count),
+    endpoints: Array.isArray(summary?.endpoints) ? summary.endpoints.map(String) : [],
+    request_count: numberOrZero(summary?.request_count),
+    hit_count: numberOrZero(summary?.hit_count),
+    miss_count: numberOrZero(summary?.miss_count),
+    hit_rate_percent: numberOrZero(summary?.hit_rate_percent),
+    miss_rate_percent: numberOrZero(summary?.miss_rate_percent),
+    stale_count: numberOrZero(summary?.stale_count),
+    stale_rate_percent: numberOrZero(summary?.stale_rate_percent),
+    fetched_date_count: numberOrZero(summary?.fetched_date_count),
+    suppressed_no_data_count: numberOrZero(summary?.suppressed_no_data_count)
+  }
 }
 
 function ObservationCoverageTable({ researchRun }: { researchRun: ResearchRunResponse }) {
@@ -609,6 +656,14 @@ function Metric({ label, value, tone }: { label: string; value: string; tone?: "
 
 function formatPercent(value: number) {
   return `${Math.round(value * 100)}%`
+}
+
+function formatSummaryPercent(value: number) {
+  return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(2)))
+}
+
+function numberOrZero(value: number | null | undefined) {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0
 }
 
 function formatSignedPercent(value: number | string | null | undefined) {

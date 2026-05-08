@@ -269,6 +269,21 @@ class ResearchAiReviewSummary(BaseModel):
     artifact_refs: dict[str, str]
 
 
+class CacheEventSummary(BaseModel):
+    cache_event_count: int
+    endpoint_count: int
+    endpoints: list[str]
+    request_count: int
+    hit_count: int
+    miss_count: int
+    hit_rate_percent: float
+    miss_rate_percent: float
+    stale_count: int
+    stale_rate_percent: float
+    fetched_date_count: int
+    suppressed_no_data_count: int
+
+
 class ResearchRunResponse(BaseModel):
     run_id: str
     requested_at: datetime
@@ -278,6 +293,7 @@ class ResearchRunResponse(BaseModel):
     observation_offsets: list[int]
     sample_count: int
     artifact_dir: str
+    cache_event_summary: CacheEventSummary
     ai_review: ResearchAiReviewSummary
     aggregate_scores: list[ResearchAggregateScore]
     samples: list[ResearchSampleResult]
@@ -291,6 +307,7 @@ class ResearchRunResponse(BaseModel):
         window_days: int,
         observation_offsets: list[int],
         artifact_dir: str,
+        cache_event_summary: CacheEventSummary,
         ai_review: ResearchAiReviewSummary,
         aggregate_scores: list[ResearchAggregateScore],
         samples: list[ResearchSampleResult],
@@ -304,6 +321,7 @@ class ResearchRunResponse(BaseModel):
             observation_offsets=observation_offsets,
             sample_count=len(samples),
             artifact_dir=artifact_dir,
+            cache_event_summary=cache_event_summary,
             ai_review=ai_review,
             aggregate_scores=aggregate_scores,
             samples=samples,

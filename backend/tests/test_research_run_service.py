@@ -356,6 +356,7 @@ def test_research_run_service_writes_cache_events(tmp_path: Path) -> None:
 
     manifest = json.loads((run_dir / "run-manifest.json").read_text())
     assert list(manifest["cache_event_summary"]) == list(CACHE_EVENT_SUMMARY_KEYS)
+    assert result.cache_event_summary.model_dump(mode="json") == manifest["cache_event_summary"]
     assert manifest["cache_event_summary"] == {
         "cache_event_count": 2,
         "endpoint_count": 1,
