@@ -2,7 +2,8 @@ import os
 
 from fastapi import APIRouter, HTTPException
 
-from app.data.market_data_client_factory import build_market_data_client
+from app.data.market_cache_inspector import inspect_summary
+from app.data.market_data_client_factory import build_market_data_client, resolve_market_data_cache_path
 from app.domain.errors import DataUnavailableError
 from app.domain.models import (
     ApiEnvelope,
@@ -37,6 +38,11 @@ def create_scan(request: ScanRequest) -> ApiEnvelope:
         return ApiEnvelope(success=True, data=service.scan(request).model_dump(mode="json"), error=None)
     except DataUnavailableError as error:
         raise HTTPException(status_code=503, detail={"code": error.code, "message": error.message}) from error
+
+
+@router.get("/market-cache/summary", response_model=ApiEnvelope)
+def get_market_cache_summary() -> ApiEnvelope:
+    return ApiEnvelope(success=True, data=inspect_summary(resolve_market_data_cache_path()), error=None)
 
 
 @router.post("/backtests", response_model=ApiEnvelope)

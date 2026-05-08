@@ -142,6 +142,31 @@ export type ResearchRunResponse = {
   }>
 }
 
+export type MarketCacheEndpointSummary = {
+  endpoint: string
+  current_entries: number
+  instruments: number
+  min_date_key: string | null
+  max_date_key: string | null
+  row_entries: number
+  provisional_no_data_entries: number
+  permanent_no_data_entries: number
+}
+
+export type MarketCacheSummary = {
+  cache_path: string
+  exists: boolean
+  totals: {
+    current_entries: number
+    entry_versions: number
+    conflicts: number
+    write_jobs: number
+  }
+  by_endpoint: MarketCacheEndpointSummary[]
+  jobs: Record<string, number>
+  conflicts: Record<string, number>
+}
+
 type ApiEnvelope<T> = {
   success: boolean
   data: T | null
@@ -184,6 +209,11 @@ export async function runScan(stockCodes: string[], nDays: number): Promise<Scan
     })
   })
   return parseEnvelope<ScanResponse>(response, "Scan request failed.")
+}
+
+export async function getMarketCacheSummary(): Promise<MarketCacheSummary> {
+  const response = await fetch("/api/market-cache/summary")
+  return parseEnvelope<MarketCacheSummary>(response, "Market cache summary request failed.")
 }
 
 export async function runBacktest(params: {

@@ -114,6 +114,45 @@ const backtestResponse = {
   error: null
 }
 
+const marketCacheSummaryResponse = {
+  success: true,
+  data: {
+    cache_path: "/tmp/market_data.sqlite3",
+    exists: true,
+    totals: {
+      current_entries: 109,
+      entry_versions: 109,
+      conflicts: 0,
+      write_jobs: 109
+    },
+    by_endpoint: [
+      {
+        endpoint: "cyq_chips",
+        current_entries: 23,
+        instruments: 1,
+        min_date_key: "20260304",
+        max_date_key: "20260403",
+        row_entries: 23,
+        provisional_no_data_entries: 0,
+        permanent_no_data_entries: 0
+      },
+      {
+        endpoint: "daily",
+        current_entries: 23,
+        instruments: 1,
+        min_date_key: "20260304",
+        max_date_key: "20260403",
+        row_entries: 23,
+        provisional_no_data_entries: 0,
+        permanent_no_data_entries: 0
+      }
+    ],
+    jobs: { SUCCEEDED: 109 },
+    conflicts: {}
+  },
+  error: null
+}
+
 const researchRunResponse = {
   success: true,
   data: {
@@ -309,6 +348,25 @@ describe("App", () => {
     expect(screen.getByText("7 / 2")).toBeInTheDocument()
     expect(screen.getByText("N+5 下跌，买入建议阶段未得到验证。")).toBeInTheDocument()
     expect(screen.getByText("N+15 未来交易日不足，暂无法观察。")).toBeInTheDocument()
+  })
+
+  it("loads market cache health without exposing cached payloads", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => marketCacheSummaryResponse
+    } as Response)
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(screen.getByRole("button", { name: /refresh cache/i }))
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/market-cache/summary"))
+    const cacheHealth = await screen.findByLabelText("Market cache health")
+    expect(within(cacheHealth).getByText("109")).toBeInTheDocument()
+    expect(within(cacheHealth).getByText("cyq_chips")).toBeInTheDocument()
+    expect(within(cacheHealth).getByText("daily")).toBeInTheDocument()
+    expect(within(cacheHealth).getByText("SUCCEEDED: 109")).toBeInTheDocument()
+    expect(screen.queryByText("payload_json")).not.toBeInTheDocument()
   })
 
   it("runs a research workflow and renders strategy scores with artifact path", async () => {
