@@ -37,6 +37,7 @@ textarea {
 
 .scanner-panel,
 .results-panel,
+.cache-health-panel,
 .backtest-panel,
 .research-panel {
   border: 1px solid rgba(36, 54, 44, 0.18);
@@ -50,6 +51,11 @@ textarea {
 }
 
 .results-panel {
+  min-width: 0;
+  padding: 22px;
+}
+
+.cache-health-panel {
   min-width: 0;
   padding: 22px;
 }
@@ -239,6 +245,30 @@ input:focus {
   color: #405047;
   font-size: 0.84rem;
   line-height: 1.45;
+}
+
+.cache-health-empty {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  min-height: 96px;
+  padding: 16px;
+  border: 1px dashed rgba(36, 54, 44, 0.24);
+  color: #506057;
+  background: #f6f8f4;
+}
+
+.cache-health-output {
+  display: grid;
+  gap: 14px;
+}
+
+.cache-health-metrics {
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+}
+
+.cache-status-grid {
+  grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr);
 }
 
 @keyframes spin {

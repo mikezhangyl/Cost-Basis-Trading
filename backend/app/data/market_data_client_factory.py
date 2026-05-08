@@ -27,6 +27,11 @@ def build_market_data_client(provider_client: Any | None = None, cache_path: Pat
     return CachedMarketDataClient(provider, cache_store, cache_writer)
 
 
+def resolve_market_data_cache_path() -> Path:
+    load_environment()
+    return _cache_path()
+
+
 def _cache_enabled() -> bool:
     raw_value = os.getenv("MARKET_DATA_CACHE_ENABLED", "true").strip().lower()
     return raw_value not in {"0", "false", "no", "off"}

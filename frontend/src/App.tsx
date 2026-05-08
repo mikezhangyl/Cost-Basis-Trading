@@ -1,9 +1,11 @@
-import { Activity, AlertTriangle, BarChart3, CheckCircle2, History, Loader2, Play, ShieldCheck } from "lucide-react"
+import { Activity, AlertTriangle, BarChart3, CheckCircle2, Database, History, Loader2, Play, RefreshCw, ShieldCheck } from "lucide-react"
 import { FormEvent, useMemo, useState } from "react"
 
 import {
   BacktestResponse,
   CacheEventSummary,
+  getMarketCacheSummary,
+  MarketCacheSummary,
   ResearchRunResponse,
   runBacktest,
   runResearchRun,
@@ -31,6 +33,9 @@ export function App() {
   const [researchRun, setResearchRun] = useState<ResearchRunResponse | null>(null)
   const [researchError, setResearchError] = useState<string | null>(null)
   const [isResearching, setIsResearching] = useState(false)
+  const [cacheSummary, setCacheSummary] = useState<MarketCacheSummary | null>(null)
+  const [cacheSummaryError, setCacheSummaryError] = useState<string | null>(null)
+  const [isLoadingCacheSummary, setIsLoadingCacheSummary] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
 
@@ -112,6 +117,18 @@ export function App() {
     }
   }
 
+  async function handleCacheSummaryRefresh() {
+    setIsLoadingCacheSummary(true)
+    setCacheSummaryError(null)
+    try {
+      setCacheSummary(await getMarketCacheSummary())
+    } catch (caught) {
+      setCacheSummaryError(caught instanceof Error ? caught.message : "Market cache summary request failed.")
+    } finally {
+      setIsLoadingCacheSummary(false)
+    }
+  }
+
   return (
     <main className="app-shell">
       <section className="scanner-panel">
@@ -177,6 +194,28 @@ export function App() {
         </div>
 
         {scan ? <SignalTable results={scan.results} /> : <EmptyState />}
+      </section>
+
+      <section className="cache-health-panel" aria-label="Market cache health">
+        <div className="results-heading">
+          <div>
+            <p className="eyebrow">Local data layer</p>
+            <h2>Cache health</h2>
+          </div>
+          <button className="secondary-action" disabled={isLoadingCacheSummary} type="button" onClick={handleCacheSummaryRefresh}>
+            {isLoadingCacheSummary ? <Loader2 className="spin-icon" size={16} /> : <RefreshCw size={16} />}
+            {isLoadingCacheSummary ? "Refreshing" : "Refresh cache"}
+          </button>
+        </div>
+
+        {cacheSummaryError ? (
+          <div className="error-banner" role="alert">
+            <AlertTriangle size={18} />
+            {cacheSummaryError}
+          </div>
+        ) : null}
+
+        {cacheSummary ? <MarketCacheHealthView summary={cacheSummary} /> : <CacheHealthEmptyState />}
       </section>
 
       <section className="backtest-panel">
@@ -308,6 +347,71 @@ function EmptyState() {
     <div className="empty-state">
       <BarChart3 size={36} />
       <p>Run a scan to compare chip distribution detail with recent price movement.</p>
+    </div>
+  )
+}
+
+function CacheHealthEmptyState() {
+  return (
+    <div className="cache-health-empty">
+      <Database size={28} />
+      <p>Refresh to inspect the local SQLite cache without reading cached payloads.</p>
+    </div>
+  )
+}
+
+function MarketCacheHealthView({ summary }: { summary: MarketCacheSummary }) {
+  const jobSummary = Object.entries(summary.jobs)
+    .map(([status, count]) => `${status}: ${count}`)
+    .join(" / ") || "No jobs"
+  return (
+    <div className="cache-health-output">
+      <div className="metric-grid cache-health-metrics">
+        <Metric label="Current entries" value={String(summary.totals.current_entries)} />
+        <Metric label="Versions" value={`${summary.totals.entry_versions} versions`} />
+        <Metric label="Write jobs" value={`${summary.totals.write_jobs} jobs`} />
+        <Metric label="Conflicts" value={`${summary.totals.conflicts} conflicts`} tone={summary.totals.conflicts > 0 ? "bad" : "good"} />
+      </div>
+      <div className="context-panel">
+        <div>
+          <h4>{summary.exists ? "Cache file found" : "Cache file missing"}</h4>
+          <p className="muted-text">{summary.cache_path}</p>
+        </div>
+        <div className="context-grid cache-status-grid">
+          <ContextItem label="Jobs" value={jobSummary} />
+          <ContextItem label="Conflict resolution" value={formatGroupCounts(summary.conflicts)} />
+        </div>
+      </div>
+      {summary.by_endpoint.length > 0 ? (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Endpoint</th>
+                <th>Entries</th>
+                <th>Instruments</th>
+                <th>Date range</th>
+                <th>Rows</th>
+                <th>No data</th>
+              </tr>
+            </thead>
+            <tbody>
+              {summary.by_endpoint.map((row) => (
+                <tr key={row.endpoint}>
+                  <td className="code-cell">{row.endpoint}</td>
+                  <td>{row.current_entries}</td>
+                  <td>{row.instruments}</td>
+                  <td>{formatDateRange(row.min_date_key, row.max_date_key)}</td>
+                  <td>{row.row_entries}</td>
+                  <td>{row.provisional_no_data_entries + row.permanent_no_data_entries}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="muted-text">No endpoint entries recorded.</p>
+      )}
     </div>
   )
 }
@@ -680,6 +784,15 @@ function formatNumber(value: number | string | null | undefined) {
 
 function formatRatio(value: number | null | undefined) {
   return typeof value === "number" ? `${value.toFixed(2)}x` : "-"
+}
+
+function formatGroupCounts(counts: Record<string, number>) {
+  const entries = Object.entries(counts)
+  return entries.length > 0 ? entries.map(([key, count]) => `${key}: ${count}`).join(" / ") : "None"
+}
+
+function formatDateRange(start: string | null, end: string | null) {
+  return start && end ? `${start} - ${end}` : "-"
 }
 
 function signalTone(action: string) {
